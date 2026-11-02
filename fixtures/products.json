@@ -1,0 +1,5 @@
+[
+  { "id": "mock-en-001", "name": "Pokémon TCG English Booster", "brand": "pokemon", "category": "tcg", "language": "en", "series": "example", "stock": 12, "maxPerOrder": 4, "globalLimit": 6, "existingQuantity": 1 },
+  { "id": "mock-de-030", "name": "Pokémon 30 Jahre Jubiläum Box", "brand": "pokemon", "category": "tcg", "language": "de", "series": "30-jahre-jubilaeum", "stock": 3, "maxPerOrder": 2, "globalLimit": 3, "existingQuantity": 0 },
+  { "id": "mock-de-other", "name": "Pokémon Deutsche Booster", "brand": "pokemon", "category": "tcg", "language": "de", "series": "example", "stock": 10, "maxPerOrder": 5, "existingQuantity": 0 }
+]

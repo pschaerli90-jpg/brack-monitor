@@ -1,0 +1,15 @@
+data/
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+*.pem
+*.key
+*.session
+*session*.json
+*cookie*.json
+*credential*.json
+*secret*.json
+.auth/
+.codex/
