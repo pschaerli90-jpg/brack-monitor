@@ -8,6 +8,7 @@
     "start": "node src/cli.js",
     "scan:brack": "node src/read-only-cli.js",
     "monitor:brack": "node src/read-only-cli.js --watch",
+    "notify:brack": "node src/telegram-cli.js",
     "test": "node --test test/*.test.js"
   }
 }

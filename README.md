@@ -2,7 +2,10 @@
 
 Eigenständiges Node.js-Projekt (Node 20+) ohne externe Laufzeitpakete. Der neue
 Scanner liest die öffentliche BRACK-Liste. Vier getrennte Konten, Sitzungen und
-Warenkörbe bleiben **Simulationen**. Telegram erzeugt eine gespeicherte Vorschau.
+Warenkörbe bleiben **Simulationen**. Der bisherige Vier-Konten-Aufruf erzeugt
+weiterhin nur gespeicherte Telegram-Vorschauen. Die neue separate
+Benachrichtigungs-CLI kann echte Produktmeldungen senden, siehe
+[Telegram-Produktmeldungen](docs/telegram.md).
 Es gibt keinen Schalter für reale Logins, Warenkorbänderungen oder Bestellungen.
 WOG und Changedetection werden weder angesprochen noch konfiguriert.
 
@@ -14,6 +17,7 @@ npm start                     # bisheriger Offline-Vier-Konten-Prototyp
 npm run scan:brack             # einmaliger öffentlicher GET-Scan, nur Lesemodus
 npm run monitor:brack          # Lesescans; mindestens 60 Sekunden Pause je Lauf
 npm run scan:brack -- --fixture fixtures/brack-listing.html
+npm run notify:brack           # neue Produktmeldungen, standardmässig Testzustellung
 ```
 
 Die BRACK-Quelle ist fest auf diese URL und `sortProducts=newdesc` begrenzt:
@@ -112,7 +116,7 @@ Sitzungserstellung erneut geprüft. Ein Scanfehler, verschwundener Artikel oder
 unbekannte neue Limits erlauben keinen Rückgriff auf alte Bestandsdaten.
 Lokale Testobergrenzen ersetzen keine von BRACK bestätigten Regeln.
 
-## Telegram und Wiederanlauf
+## Telegram-Vorschauen und Wiederanlauf im bisherigen Vier-Konten-Ablauf
 
 Ein Auftrag je Artikel/Konto durchläuft `pending -> prepared -> done`.
 Vorbereitungen verwenden Zielmengen und stabile Idempotenzschlüssel.
@@ -163,13 +167,14 @@ fehlende Testlimits sind ein dokumentierter blockierter Zustand.
 
 ## Tests und Produktionsgrenzen
 
-`npm test` führt alle Testdateien aus. Die 27 vorhandenen Einzeltests bleiben
+`npm test` führt alle Testdateien aus. Die bisherigen 52 Einzeltests bleiben
 erhalten. Neue Tests decken reale bereinigte BRACK-Daten, synthetische Auswahl,
 Paginierung, Schemafehler, HTTP-Grenzen/Backoff, Zugriffsschutz, Testlimits,
 Aktualität, Zustandsfehler, vier Konten, Nachrichten und Wiederanläufe ab.
 Alle Tests verwenden lokale Daten und injizierte Transporte; sie benötigen weder
 BRACK-Zugriff noch Zugangsdaten. GitHub Actions ist für Node 20, 22 und 24
-konfiguriert. Den tatsächlich geprüften Stand dokumentiert [docs/validation.md](docs/validation.md).
+konfiguriert. Den Scanner-Stand dokumentiert [docs/validation.md](docs/validation.md),
+die Telegram-Erweiterung [docs/telegram-validation.md](docs/telegram-validation.md).
 
 Vor produktivem Betrieb fehlen insbesondere:
 
@@ -181,9 +186,11 @@ Vor produktivem Betrieb fehlen insbesondere:
    Sitzungen, Ablauf/Erneuerung, serverseitigem Warenkorbabgleich und Behandlung
    unklarer Ergebnisse nach einem Prozessabbruch. Hier existieren ausschliesslich
    Mocks; die vier IDs sind keine verbundenen BRACK-Konten.
-4. Ein realer Telegram-Transport mit Token aus sicherer Laufzeitkonfiguration,
-   Timeouts, Backoff und expliziter Behandlung unklarer Zustellung. Telegram
-   dedupliziert nicht anhand eines frei gewählten Idempotenzschlüssels.
+4. Sichere lokale Telegram-Konfiguration und ein bewusst gestarteter, manuell
+   freigegebener Benachrichtigungsprozess. Der separate echte Transport ist
+   implementiert, wurde hier aber ohne reale Zugangsdaten und mit simulierten
+   HTTP-Antworten geprüft. Telegram dedupliziert nicht anhand eines frei gewählten
+   Idempotenzschlüssels; unklare Zustellungen bleiben deshalb zur Prüfung stehen.
 5. Betriebsfreigabe, Monitoring, Datensicherung, Retention und gegebenenfalls
    koordinierter Speicher für mehrere Hosts. Keine Dienste wurden ausgerollt.
 
