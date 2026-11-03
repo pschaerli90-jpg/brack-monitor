@@ -13,3 +13,5 @@ node_modules/
 *secret*.json
 .auth/
 .codex/
+config/limits.local.json
+.test-*/

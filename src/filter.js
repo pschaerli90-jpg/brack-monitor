@@ -1,7 +1,7 @@
 export function priority(product) {
   if (product.brand !== 'pokemon') return 0;
   if (product.language === 'en' && product.category === 'tcg') return 2;
-  if (product.language === 'de' && product.series === '30-jahre-jubilaeum') return 1;
+  if (product.language === 'de' && product.category === 'tcg' && product.series === '30-jahre-jubilaeum') return 1;
   return 0;
 }
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "products": {
+    "100001": {
+      "maxPerOrder": 2,
+      "globalLimit": 5,
+      "accountLimits": { "mock-account-1": 1 },
+      "expiresAt": "2000-01-01T00:00:00.000Z"
+    }
+  }
+}
