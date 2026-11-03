@@ -1,148 +1,191 @@
-# BRACK Pokémon Monitor – Offline-Prototyp
+# BRACK Pokémon Monitor
 
-## Aktueller Standard: genau vier simulierte Konten
+Eigenständiges Node.js-Projekt (Node 20+) ohne externe Laufzeitpakete. Der neue
+Scanner liest die öffentliche BRACK-Liste. Vier getrennte Konten, Sitzungen und
+Warenkörbe bleiben **Simulationen**. Telegram erzeugt eine gespeicherte Vorschau.
+Es gibt keinen Schalter für reale Logins, Warenkorbänderungen oder Bestellungen.
+WOG und Changedetection werden weder angesprochen noch konfiguriert.
 
-`npm start` verwendet jetzt `runFourMonitor` mit `mock-account-1` bis
-`mock-account-4`. Andere Konten, doppelte IDs und eine andere Anzahl werden
-abgelehnt. Es existiert weiterhin kein Live-Modus.
-
-Der gemeinsame Scanner läuft einmal je Aufruf. Die zentrale persistente
-Warteschlange enthält genau einen Auftrag je Produkt und Konto. Englische
-TCG-Produkte werden zuerst bearbeitet. Jedes Konto besitzt eine eigene simulierte
-Sitzung, Warenkorbmengen, Fehlerstatus und chronologische Verarbeitungshistorie.
-Loginfehler stoppen für diesen Lauf nur das betroffene Konto. Warenkorbfehler
-bleiben am Auftrag; andere Konten und Produkte laufen weiter.
-
-Der Zustand liegt separat in `data/four-accounts/state.json`. Der bisherige
-Einzelkonto-Zustand bleibt unverändert und wird nicht automatisch migriert oder
-nochmals als Vier-Konten-Zustand interpretiert. Die frühere Einzelkonto-Funktion
-bleibt für bestehende Tests erhalten; die nachfolgenden allgemeinen Abschnitte
-beschreiben teilweise diesen ursprünglichen Ablauf.
-
-### Kontenübergreifende Mengenregeln
-
-- `stock` ist im Vier-Konten-Modell der gemeinsam verfügbare Gesamtbestand.
-- `globalLimit` ist ein verpflichtendes gemeinsames Limit für alle vier Konten
-  pro Produkt. Es wird niemals mit der Kontenzahl multipliziert.
-- `maxPerOrder` begrenzt jede einzelne Kontomenge. Optionale `accountLimits`
-  können sie weiter reduzieren (Schlüssel sind die vier Konto-IDs).
-- Zuteilung: zuerst Konto 1, dann 2, 3, 4; jedes bekommt die maximal verbleibende
-  zulässige Menge. Das ist bewusst keine faire Gleichverteilung. Fehlgeschlagene
-  Konten reservieren kein Budget; erfolgreiche spätere Konten können es nutzen.
-- Bereits bestätigte Warenkorbmengen zählen auch bei einer fehlgeschlagenen
-  Telegram-Simulation gegen das globale Budget. Ein Zustellversuch bereitet den
-  Warenkorb nicht nochmals vor.
-- Ohne Budget bleibt der Auftrag offen und wird beim nächsten Aufruf geprüft.
-  `limited` ist eine Mengenbegrenzung, kein technischer Fehler.
-- Unbekannte Limits werden abgelehnt. Bei nachträglich gesenkten Limits unter
-  bereits vorbereitete Mengen werden weitere Aktionen für dieses Produkt
-  blockiert und ein Fehler protokolliert. Bestehende Mengen werden nicht heimlich
-  entfernt. Manuelle Klärung ist erforderlich.
-- Vier-Konten-Warenkörbe beginnen leer. Das alte Fixture-Feld `existingQuantity`
-  betrifft nur den alten Einzelkonto-Test; im neuen Ablauf stammen bestehende
-  Mengen ausschliesslich aus dem jeweiligen gespeicherten Kontowarenkorb.
-
-Die exklusive Zustandssperre umfasst Scan, Mengenvergabe und Adapteraufrufe.
-Ein konkurrierender Lauf mit demselben Zustand wird vor dem Scan abgewiesen.
-Für alle vier Konten muss derselbe Zustandspfad verwendet werden; getrennte
-Projektkopien koordinieren ihre Limits nicht miteinander. Stabile Schlüssel pro
-Produkt/Konto und Zielmengen statt additiver Wiederholungen bilden die Grundlage
-für idempotente Verarbeitung. Die Mocks haben keine externen Seiteneffekte.
-
-### Noch fehlende Schnittstellen für mehrere Konten
-
-Die realen Regeln für kontoübergreifende Beschränkungen sind unbekannt. Hier gelten
-ausschliesslich die expliziten Simulationswerte, ohne Umgehung gemeinsamer Limits.
-Weitere Limits über Produktgruppen oder Zeiträume sind nicht implementiert.
-Reale Sitzungen mit Ablauf/Erneuerung, sichere Geheimnisverwaltung, serverseitiger
-Warenkorbabgleich und Zustellbestätigungen müssten gesondert entwickelt werden.
-Bei Scanner-Ausfall nutzt ein Wiederanlauf zuletzt gespeicherte Mock-Daten;
-für Live-Betrieb wären Aktualitätsgrenzen und erneute Mengenvalidierung nötig.
-
-Tests: `npm test` führt beide Testdateien aus. Detaillierte TAP-Ausgabe ist mit
-`node test/monitor.test.js` und `node test/four-monitor.test.js` verfügbar.
-
-## Ursprünglicher Einzelkonto-Prototyp und allgemeine Hinweise
-
-Eigenständiges Node.js-20-Projekt ohne Changedetection und ohne externe Pakete.
-Alle Adapter sind Mocks: keine Netzwerkverbindungen, Logins, realen Warenkörbe,
-Telegram-Nachrichten oder Bestellungen. Es gibt keinen produktiven Betriebsmodus.
-Das Projekt installiert oder verändert keine Dienste oder Container.
-
-## Lokal ausführen
-
-Im Verzeichnis `brack-monitor`:
+## Ausführen
 
 ```sh
 npm test
-npm start
+npm start                     # bisheriger Offline-Vier-Konten-Prototyp
+npm run scan:brack             # einmaliger öffentlicher GET-Scan, nur Lesemodus
+npm run monitor:brack          # Lesescans; mindestens 60 Sekunden Pause je Lauf
+npm run scan:brack -- --fixture fixtures/brack-listing.html
 ```
 
-Der Start führt genau einen simulierten Scan aus. Wiederholte Starts verarbeiten
-bereits abgeschlossene Produkt-IDs nicht erneut. `data/state.json` enthält den
-Zustand und simulierte Ergebnisse. Logs sind JSON-Zeilen auf stdout; Fehler führen
-zu Exitcode 1. Tests erzeugen und entfernen eigene Verzeichnisse im Projekt.
-Keine Zugangsdaten konfigurieren; solche werden derzeit nicht verwendet.
+Die BRACK-Quelle ist fest auf diese URL und `sortProducts=newdesc` begrenzt:
 
-## Fachliche Regeln
+<https://www.brack.ch/sport-freizeit/spielwaren/puzzles-spiele/spiele/sammelkarten?sortProducts=newdesc&query=pok%C3%A9mon>
 
-- Englisch, Marke `pokemon`, Kategorie `tcg`: Priorität 2.
-- Deutsch, Marke `pokemon`, Serie `30-jahre-jubilaeum`: Priorität 1.
-- Andere Produkte werden ignoriert. Klassifikation erfolgt über explizite
-  normalisierte Felder, nicht über unzuverlässige Titel-Teilstrings.
-- Neu bedeutet hier: erstmals beobachtete stabile Produkt-ID. Wiederverfügbarkeit
-  oder Änderungen bereits abgeschlossener Produkte lösen keine neue Meldung aus.
-- Mengenmodell der Simulation: `stock` ist der insgesamt für diesen Warenkorb
-  verfügbare Bestand, `maxPerOrder` das Gesamtlimit pro Artikel, `existingQuantity`
-  die bereits vorhandene Menge. Ziel ist das Minimum aus Bestand und Limit;
-  hinzuzufügen ist die Differenz. Unbekannte oder ungültige Werte werden abgelehnt.
-- Warenkorbvorbereitung ist nur ein gespeicherter Mengenplan, kein Bestellvorgang.
-- Erst nach erfolgreicher Vorbereitung entsteht die simulierte Telegram-Meldung.
+`--interval-seconds 120` verändert die Pause im Watch-Modus. Ein Lauf wird komplett
+abgewartet; danach beginnt die Pause. `SIGINT`/`SIGTERM` beenden den Watch-Modus
+nach dem laufenden, zeitlich begrenzten Scan. Hier wurde kein Hintergrunddienst
+gestartet oder installiert. Auf Node 24.5+ mit vorgeschriebenem HTTP-Proxy kann
+`NODE_USE_ENV_PROXY=1` nötig sein; TLS-Prüfung und geerbte Proxy-Konfiguration
+beibehalten. Auf älteren Node-Versionen in solchen Umgebungen muss ein
+freigegebener Proxy-Transport bereitgestellt werden.
 
-## Ablauf und Wiederanlauf
+## Scanner und Auswahl
 
-`MockScanner.scan()` liest ausschliesslich `fixtures/products.json`.
-Neue Treffer werden vor Adapteraufrufen dauerhaft gespeichert. Der Ablauf lautet
-`pending -> prepared -> done`. Fehler bleiben mit Versuchszähler und Fehlermeldung
-erhalten. Beim nächsten manuellen Start werden sie erneut versucht. Aktualisierte
-Scannerdaten ersetzen die Daten noch nicht vorbereiteter Produkte. Vorbereitete
-Meldungen werden auch dann bearbeitet, wenn der Scanner fehlschlägt.
+- `src/brack/http.js`: ausschliesslich öffentliche GETs ohne Cookies oder
+  Zugangsdaten. Keine Weiterleitungen, keine Browser-Automation. Timeout 15 s
+  pro Versuch einschliesslich Body, höchstens drei Versuche, exponentieller
+  Backoff mit Jitter und maximal 2 MB pro Antwort. Netzwerkfehler, 408, 429 und
+  5xx werden begrenzt wiederholt. `Retry-After` gilt auch für den nächsten
+  geplanten Scan, wenn die geforderte Pause das interne Wartelimit übersteigt.
+- 401, 403 und erkannte CAPTCHA-/Challenge-Seiten stoppen automatische Läufe.
+  Es gibt keine Umgehung. Andere Fehler werden gespeichert und im Watch-Modus
+  beim nächsten regulären Lauf erneut geprüft.
+- `src/brack/parser.js`: liest ausschliesslich `b2c-search-products` und
+  Listenmetadaten aus `b2c-search-datalayer`. Keine Skriptausführung und kein
+  Speichern des vollständigen HTML oder von `INITIAL_STATE`.
+- Die eindeutige BRACK-Artikelnummer `sku` ist der Produktschlüssel, nicht Titel,
+  EAN oder URL. Doppelte IDs und widersprüchliche IDs werden abgelehnt.
+  Erstmalig beobachtete Artikel werden mit Zeitstempeln dauerhaft erfasst.
+- Englisch + Pokémon + Sammelkarten: Priorität 2. Deutsch + Pokémon +
+  Sammelkarten + «30 Jahre Jubiläum»: Priorität 1. Andere Treffer werden nicht
+  vorbereitet. Englisch wird für alle Konten zuerst bearbeitet.
+- Die Produktsprache stammt aus dem expliziten Feld `Sprache:`. Das BRACK-Feld
+  `language: de` beschreibt die Website und wird dafür nicht verwendet.
+  Mehrdeutige Sprachen werden ignoriert. Marke und Kategorie stammen aus
+  Themenwelt/Hersteller und Breadcrumbs. Die Jubiläumsserie erfordert das
+  explizite Serienfeld oder die Phrase «30 Jahre Jubiläum» im Titel, mit
+  Leerzeichen oder Bindestrichen; Jahreszahlen allein reichen nicht.
+- Die Reihenfolge aus `order` und die bestätigte Sortierung `newdesc` bleiben
+  erhalten. Der Scanner folgt nur gleichartigen, gleich sortierten `rel=next`-
+  Links, maximal zehn Seiten. Trefferzahl, Seitenfolge und IDs werden geprüft.
+  Fehlen bestätigte Folgelinks bei einer unvollständigen Liste, scheitert der
+  gesamte Scan. Keine teilweise Veröffentlichung oder geratene interne API.
 
-Eine exklusive Dateisperre verhindert parallele Läufe. Zustandsdateien werden über
-eindeutige temporäre Dateien, Dateisynchronisierung und Umbenennen geschrieben.
-Beschädigter Zustand wird nicht automatisch verworfen. Nach einem harten Abbruch
-kann `data/run.lock` verbleiben: erst nach Prüfung, dass kein Lauf mehr aktiv ist,
-manuell entfernen. Automatisches Übernehmen veralteter Sperren ist nicht enthalten.
+Der öffentliche Leseabruf vom 2. November 2026 lieferte 32 Artikel auf einer
+vollständigen Seite; darunter war kein englischer oder deutscher Jubiläumstreffer.
+Das bereinigte reale Schema liegt in `fixtures/brack-listing.html`. Auswahl,
+Jubiläumsprodukte und Mehrseitenfälle werden zusätzlich synthetisch getestet.
+Die echte Mehrseiten-Navigation muss bei Verfügbarkeit noch validiert werden.
 
-Adapter erhalten stabile Idempotenzschlüssel. Die Mocks erzeugen deterministische
-Referenzen ohne externe Seiteneffekte. Für reale Adapter wäre damit allein keine
-Exactly-once-Garantie gegeben: Ein Abbruch nach externem Erfolg, aber vor lokaler
-Speicherung kann Wiederholungen verursachen. Warenkorb muss deshalb einen Zielstand
-abgleichen; Telegram benötigt eine gesonderte Zustellstrategie, da ein Schlüssel
-allein keine Deduplizierung durch einen externen Dienst garantiert.
+## Mengen und vier Konten
 
-## Noch fehlende Schnittstellen und bewusste Grenzen
+Der vorhandene Ablauf `runFourMonitor` verwendet weiterhin genau
+`mock-account-1` bis `mock-account-4`. Jedes Konto besitzt eine eigene simulierte
+Sitzung, Warenkorbmenge, Historie und Fehlerablage. Ein Loginfehler betrifft nur
+das jeweilige Konto; andere Konten laufen weiter.
 
-1. **BRACK-Scanner:** erlaubte Datenquelle, Schema, Paginierung, stabile IDs,
-   Sprach-/Serienzuordnung und Bedeutung der Bestandsfelder klären. Keine reale
-   URL oder API wurde vorausgesetzt. Echte Abrufe sind nicht implementiert.
-2. **Warenkorb:** aktuelle serverseitige Mengenvalidierung, Kontolimits, vorhandene
-   Positionen, Reservierung und Sitzung klären. Vor Verwendung eines alten Plans
-   wäre erneute Validierung nötig. Ein reales Checkout-Modul ist nicht vorhanden.
-3. **Telegram:** sichere Konfiguration, begrenzte Netzwerk-Timeouts, Wiederholungen,
-   Backoff und Umgang mit unklaren Zustellergebnissen fehlen bewusst. Es wird nur
-   das simulierte Nachrichtenergebnis gespeichert.
-4. **Scheduling:** kein Timer, Hintergrundprozess oder automatischer Neustart.
-   Wiederholungsversuche erfolgen ausschliesslich beim nächsten Aufruf.
-5. **Betrieb:** keine Verfügbarkeitsalarme, Eskalationen, Retention oder Metriken;
-   strukturierte Logs und Fehlerstatus bilden deren Grundlage. Adapter werden
-   seriell ausgeführt; hängende reale Adapter würden eigene Abbruch-/Timeoutlogik
-   benötigen. Warenkorbfehler verhindern bis zur erfolgreichen Wiederholung die
-   Produktmeldung; eine separate Fehlermeldungs-Outbox wäre eine Erweiterung.
-6. **Speicher:** für einen lokalen Prozess mit kleinen Datenmengen ausgelegt.
-   Kein Schutz gegen bösartige Symlinks, kein Datenbank-Backend, keine Garantie
-   bei Stromausfall (Verzeichnis wird nicht explizit synchronisiert). Der erlaubte
-   Zustandspfad wird lexikalisch auf das Projekt begrenzt.
+Die Liste liefert `inventory.current`, aber keine bestätigten Bestell- oder
+kontenübergreifenden Limits. Nichtpositive Bestände werden als nicht verfügbar
+behandelt; fehlende/ungültige Bestände und inaktive Produkte bleiben unbekannt.
+Angekündigte Nachlieferungen werden nicht als Bestand verwendet. Unbekannte
+Limits werden nicht erfunden: Ein relevanter neuer Artikel und seine vier
+Aufträge werden gespeichert und bleiben ohne Vorbereitung offen.
 
-Vor einer echten Integration sind gesonderte Freigabe, Schnittstellenprüfung und
-weitere Tests nötig. Es gibt hier keinen Schalter, der reale Adapter aktiviert.
+Für gezielte Simulationen können ausdrücklich lokale **Testobergrenzen** gesetzt
+werden, getrennt von den Produktdaten:
+
+```sh
+cp config/limits.example.json config/limits.local.json
+# Nur zum Testen: Artikelnummern, Mengen und Ablaufzeit bewusst anpassen.
+npm run scan:brack -- --limits config/limits.local.json
+```
+
+Das Beispiel hat eine fiktive Artikelnummer und eine bereits abgelaufene Frist.
+`limits.local.json` ist in Git ignoriert und enthält keine Zugangsdaten.
+`maxPerOrder`, `globalLimit` und `expiresAt` sind je Artikel erforderlich;
+`accountLimits` kann einzelne der vier Konten weiter begrenzen. Keine Einträge
+und abgelaufene Einträge bedeuten unbekannte Limits. Die Datei wird beim Start
+gelesen; Änderungen erfordern einen Neustart.
+
+Das gemeinsame Budget ist `min(stock, globalLimit)`, insgesamt über alle vier
+Konten. `maxPerOrder` und optionale Kontolimits begrenzen die Einzelmengen.
+Konto 1 erhält zuerst die maximal zulässige Menge, dann Konto 2, 3 und 4.
+Bestätigte simulierte Mengen verbrauchen Budget auch bei fehlgeschlagener
+Nachrichtenvorschau. Das globale Limit wird niemals mit vier multipliziert.
+Gesunkene Grenzen unter vorhandene Mengen blockieren weitere Aktionen und
+verlangen manuelle Klärung; es werden keine Positionen automatisch entfernt.
+Produktgruppen-, Haushalts- und Zeitraumlimits sind noch nicht abgebildet.
+
+Im Lesemodus benötigen neue Vorbereitungen einen erfolgreichen vollständigen
+Scan desselben Laufs, einen aktuell enthaltenen Artikel, höchstens 60 Sekunden
+alte Daten und gültige Testlimits. Dies wird auch nach einer abgewarteten
+Sitzungserstellung erneut geprüft. Ein Scanfehler, verschwundener Artikel oder
+unbekannte neue Limits erlauben keinen Rückgriff auf alte Bestandsdaten.
+Lokale Testobergrenzen ersetzen keine von BRACK bestätigten Regeln.
+
+## Telegram und Wiederanlauf
+
+Ein Auftrag je Artikel/Konto durchläuft `pending -> prepared -> done`.
+Vorbereitungen verwenden Zielmengen und stabile Idempotenzschlüssel.
+Erst nach einer bestätigten und gespeicherten simulierten Vorbereitung entsteht
+mit `TelegramPreview` eine Telegram-kompatible Nachrichtenvorschau:
+
+```text
+TEST – Warenkorbvorbereitung simuliert
+Produkt: Pokémon English Booster
+Menge: 2
+Konto: mock-account-1
+Link: https://www.brack.ch/pokemon-english-booster-100001
+Keine echte Warenkorbänderung, keine Bestellung.
+```
+
+Die Vorschau enthält keinen Token und wird nicht versendet. Sie liegt am Auftrag
+unter `notification.message` und `notification.payload`. Ein Fehler bei ihrer
+Erzeugung wird beim nächsten Lauf erneut versucht, ohne erneute Vorbereitung.
+Dafür wird der zum Vorbereitungszeitpunkt gespeicherte Produktsnapshot verwendet.
+Bereits vorbereitete Vorschauen können auch bei späterem Scanner-Ausfall erzeugt
+werden; neue Vorbereitungen bleiben dann gesperrt. Abgeschlossene Artikel/Konto-
+Paare werden nach Neustart nicht erneut vorbereitet. Titeländerungen oder
+Wiederverfügbarkeit derselben Artikelnummer erzeugen keine neue Aktion.
+
+## Dauerhafter Zustand und Sperren
+
+| Aufruf | Zustand |
+| --- | --- |
+| `npm start` | `data/four-accounts/state.json` |
+| `scan:brack` / `monitor:brack` | `data/brack-read-only/state.json` |
+| `scan:brack -- --fixture …` | `data/brack-fixture/state.json` |
+| alter Einzelkonto-Ablauf `runMonitor` | weiterhin separat, keine Migration |
+
+Eine exklusive `run.lock` je Zustandsverzeichnis umfasst Scan, Mengenplanung,
+Adapteraufrufe und Speicherung. Ein paralleler Prozess mit demselben Zustand
+scheitert vor dem Scan. Alle vier Konten müssen denselben Zustand verwenden;
+verschiedene Verzeichnisse/Hosts koordinieren keine gemeinsamen Limits.
+Beschädigte Zustände werden abgewiesen und nicht automatisch zurückgesetzt.
+Dateien werden mit Modus 0600 über eindeutige temporäre Dateien, `fsync`,
+Umbenennen und Verzeichnissynchronisierung gespeichert (Linux).
+
+Nach einem harten Prozessabbruch kann `run.lock` bestehen bleiben. Erst nach
+Prüfung, dass kein Lauf mehr aktiv ist, manuell entfernen. Keine automatische
+Übernahme alter Sperren. Datenverzeichnisse sind in Git ignoriert. Es gibt noch
+keine verteilte Datenbank, Retention oder Absicherung gegen bösartige lokale
+Symlinks. Logs sind JSON-Zeilen; Fehler führen beim Einzelaufruf zu Exitcode 1,
+fehlende Testlimits sind ein dokumentierter blockierter Zustand.
+
+## Tests und Produktionsgrenzen
+
+`npm test` führt alle Testdateien aus. Die 27 vorhandenen Einzeltests bleiben
+erhalten. Neue Tests decken reale bereinigte BRACK-Daten, synthetische Auswahl,
+Paginierung, Schemafehler, HTTP-Grenzen/Backoff, Zugriffsschutz, Testlimits,
+Aktualität, Zustandsfehler, vier Konten, Nachrichten und Wiederanläufe ab.
+Alle Tests verwenden lokale Daten und injizierte Transporte; sie benötigen weder
+BRACK-Zugriff noch Zugangsdaten. GitHub Actions ist für Node 20, 22 und 24
+konfiguriert. Den tatsächlich geprüften Stand dokumentiert [docs/validation.md](docs/validation.md).
+
+Vor produktivem Betrieb fehlen insbesondere:
+
+1. Bestätigung der erlaubten Datenquelle und des beobachteten Schemas einschliesslich
+   echter Mehrseitenfälle und tatsächlich angebotener Jubiläumsprodukte.
+2. Verifizierte Bestell-, Konto-, Produktgruppen-, Haushalts- und Zeitraumlimits
+   von BRACK sowie Bedeutung und Aktualität der Bestandsangaben.
+3. Ein separat freizugebender realer Vier-Konten-Adapter mit sicher verwalteten
+   Sitzungen, Ablauf/Erneuerung, serverseitigem Warenkorbabgleich und Behandlung
+   unklarer Ergebnisse nach einem Prozessabbruch. Hier existieren ausschliesslich
+   Mocks; die vier IDs sind keine verbundenen BRACK-Konten.
+4. Ein realer Telegram-Transport mit Token aus sicherer Laufzeitkonfiguration,
+   Timeouts, Backoff und expliziter Behandlung unklarer Zustellung. Telegram
+   dedupliziert nicht anhand eines frei gewählten Idempotenzschlüssels.
+5. Betriebsfreigabe, Monitoring, Datensicherung, Retention und gegebenenfalls
+   koordinierter Speicher für mehrere Hosts. Keine Dienste wurden ausgerollt.
+
+Ein Checkout- oder Bestellmodul ist nicht enthalten. Keine Zugangsdaten in
+Fixtures, Konfigurationen oder GitHub speichern.

@@ -1,6 +1,7 @@
 import { priority, validateProduct } from './filter.js';
 import { validateAccounts } from './accounts.js';
 import { jsonLogger } from './monitor.js';
+import { preparationMessage } from './notification.js';
 
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -54,36 +55,84 @@ function history(a, job, event, extra = {}) {
   a.history.push({ time: new Date().toISOString(), productId: job.productId, event, ...extra });
 }
 
+function fresh(product, currentProducts, at, maxAge) {
+  const age = at.getTime() - Date.parse(product.source?.observedAt);
+  return currentProducts.has(product.id) && product.source?.provider === 'brack' &&
+    Number.isFinite(age) && age >= 0 && age <= maxAge &&
+    product.limitSource === 'local-test-policy' && Date.parse(product.limitsExpireAt) > at.getTime();
+}
+
+function deferStale(job, summary) {
+  job.lastError = 'Keine aktuellen Produktdaten mit gültigen Testlimits; Vorbereitung gesperrt';
+  job.lastStage = 'freshness';
+  summary.limited++;
+}
+
 // Shared scan and durable queue; the exclusive store lock covers the whole run.
-export async function runFourMonitor({ scanner, accounts, adapter, telegram, store, log = jsonLogger }) {
+export async function runFourMonitor({ scanner, accounts, adapter, telegram, store, log = jsonLogger,
+  now = () => new Date(), maxSnapshotAgeMs = 60000 }) {
   validateAccounts(accounts);
+  const readOnly = scanner.mode === 'read-only';
+  if (!integer(maxSnapshotAgeMs) || maxSnapshotAgeMs === 0) throw new Error('Ungültige Aktualitätsgrenze');
   const orderedAccounts = [...accounts].sort((a, b) => a.id.localeCompare(b.id));
   return store.locked(async () => {
     const state = await store.load();
+    if (state.multi && (state.multi.operationMode === 'read-only') !== readOnly) throw new Error('Getrennten Zustand für Lese- und Offline-Modus verwenden');
     const m = initialise(state, orderedAccounts);
+    if (readOnly) {
+      m.operationMode = 'read-only';
+      m.observations ??= {};
+      if (!object(m.observations) || Object.entries(m.observations).some(([id, o]) => !/^[1-9]\d*$/.test(id) ||
+          !object(o) || !Number.isFinite(Date.parse(o.firstSeenAt)) || !Number.isFinite(Date.parse(o.lastSeenAt)) ||
+          typeof o.selected !== 'boolean') || Object.keys(m.products).some(id => !Object.hasOwn(m.observations, id))) {
+        throw new Error('Ungültige Artikelbeobachtungen');
+      }
+      for (const job of Object.values(m.queue).filter(j => j.status !== 'pending')) {
+        validateProduct(job.preparedProduct);
+        if (job.preparedProduct.id !== job.productId || job.cart?.accountId !== job.accountId ||
+            job.cart?.productId !== job.productId || job.cart?.mode !== 'mock' ||
+            job.cart?.targetQuantity !== job.plan.targetQuantity) throw new Error('Ungültige gespeicherte Vorbereitung');
+      }
+    }
     const summary = { discovered: 0, completed: 0, limited: 0, failed: 0 };
     const blockedProducts = new Set();
+    const currentProducts = new Set();
     let products = [];
     try {
       products = await scanner.scan();
       if (!Array.isArray(products)) throw new Error('Scanner muss eine Produktliste liefern');
-    } catch (err) { products = []; summary.failed++; log({ event: 'scan_failed', error: err.message }); }
+      if (readOnly) m.lastScan = { status: 'ok', at: now().toISOString(), count: products.length };
+    } catch (err) {
+      products = []; summary.failed++;
+      if (readOnly) m.lastScan = { status: 'failed', at: now().toISOString(), error: err.message };
+      if (readOnly && err.name === 'AccessRestrictedError') summary.halted = true;
+      if (readOnly && integer(err.retryAfterMs)) summary.retryAfterMs = err.retryAfterMs;
+      log({ event: 'scan_failed', error: err.message });
+    }
     for (const product of products) {
       try {
         validateProduct(product);
-        if (!priority(product)) continue;
-        for (const a of orderedAccounts) limits(product, a.id);
+        if (readOnly) {
+          if (!/^[1-9]\d*$/.test(product.id)) throw new Error('BRACK-Artikelnummer erforderlich');
+          const prior = m.observations[product.id];
+          m.observations[product.id] = { firstSeenAt: prior?.firstSeenAt ?? now().toISOString(),
+            lastSeenAt: now().toISOString(), selected: priority(product) > 0 };
+        }
+        if (!priority(product)) { if (readOnly) blockedProducts.add(product.id); continue; }
+        if (!readOnly) for (const a of orderedAccounts) limits(product, a.id);
         if (!Object.hasOwn(m.products, product.id)) {
           Object.defineProperty(m.products, product.id, { value: product, enumerable: true, writable: true, configurable: true });
           for (const a of orderedAccounts) m.queue[keyFor(product.id, a.id)] = { productId: product.id, accountId: a.id, status: 'pending', attempts: 0 };
           summary.discovered++;
         } else m.products[product.id] = product;
+        currentProducts.add(product.id);
       } catch (err) {
         if (typeof product?.id === 'string') blockedProducts.add(product.id);
         summary.failed++;
         log({ event: 'invalid_product', error: err.message });
       }
     }
+    if (readOnly) summary.scanned = products.length;
     // Never continue with stale limits when the latest snapshot is invalid.
     // Lowered limits cannot silently remove previously prepared positions.
     for (const product of Object.values(m.products)) {
@@ -91,7 +140,9 @@ export async function runFourMonitor({ scanner, accounts, adapter, telegram, sto
       try { for (const a of orderedAccounts) planFor(m, product, a.id); }
       catch (err) {
         blockedProducts.add(product.id);
-        summary.failed++;
+        if (readOnly && ['stock', 'maxPerOrder', 'globalLimit'].some(k => !integer(product[k]))) summary.limited++;
+        else summary.failed++;
+        if (readOnly) m.observations[product.id].blockedReason = err.message;
         log({ event: 'product_limits_blocked', productId: product.id, error: err.message });
       }
     }
@@ -104,6 +155,10 @@ export async function runFourMonitor({ scanner, accounts, adapter, telegram, sto
       const account = orderedAccounts.find(a => a.id === job.accountId);
       const local = m.accounts[job.accountId];
       const product = m.products[job.productId];
+      if (readOnly && job.status === 'pending' && !fresh(product, currentProducts, now(), maxSnapshotAgeMs)) {
+        deferStale(job, summary);
+        continue;
+      }
       job.attempts++;
       let stage = 'login';
       try {
@@ -116,6 +171,12 @@ export async function runFourMonitor({ scanner, accounts, adapter, telegram, sto
             await store.save(state);
           }
           stage = 'cart';
+          // Check again after an awaited session operation, immediately before planning.
+          if (readOnly && !fresh(product, currentProducts, now(), maxSnapshotAgeMs)) {
+            deferStale(job, summary);
+            await store.save(state);
+            continue;
+          }
           const plan = planFor(m, product, account.id);
           if (plan.targetQuantity === 0) {
             job.lastError = 'Kein verfügbares kontenübergreifendes Mengenbudget';
@@ -131,12 +192,13 @@ export async function runFourMonitor({ scanner, accounts, adapter, telegram, sto
           local.cart[`product:${product.id}`] = plan.targetQuantity;
           job.plan = plan;
           job.cart = result;
+          job.preparedProduct = structuredClone(product);
           job.status = 'prepared';
           history(local, job, 'cart_prepared', { targetQuantity: plan.targetQuantity });
           await store.save(state);
         }
         stage = 'telegram';
-        job.notification = await telegram.send(`SIMULATION | ${account.id} | ${product.name} | Menge: ${job.plan.targetQuantity} | Kein echter Warenkorb, keine Bestellung.`, { idempotencyKey: `telegram:${key}` });
+        job.notification = await telegram.send(preparationMessage({ account, product: job.preparedProduct ?? product, plan: job.plan }), { idempotencyKey: `telegram:${key}` });
         job.status = 'done';
         delete job.lastError;
         delete job.lastStage;
@@ -154,7 +216,8 @@ export async function runFourMonitor({ scanner, accounts, adapter, telegram, sto
       }
       await store.save(state);
     }
-    log({ event: 'four_account_run_completed', mode: 'mock', ...summary });
+    await store.save(state);
+    log({ event: 'four_account_run_completed', mode: readOnly ? 'read-only' : 'mock', ...summary });
     return summary;
   });
 }

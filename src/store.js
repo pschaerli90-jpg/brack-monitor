@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename, open, unlink } from 'node:fs/promises';
+import { mkdir, readFile, rename, open, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -36,8 +36,12 @@ export class Store {
   async save(state) {
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     const handle = await open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify(state, null, 2)); await handle.sync(); }
-    finally { await handle.close(); }
-    await rename(temporary, this.path);
+    try {
+      try { await handle.writeFile(JSON.stringify(state, null, 2)); await handle.sync(); }
+      finally { await handle.close(); }
+      await rename(temporary, this.path);
+      const directory = await open(this.directory, 'r');
+      try { await directory.sync(); } finally { await directory.close(); }
+    } finally { await unlink(temporary).catch(err => { if (err.code !== 'ENOENT') throw err; }); }
   }
 }
