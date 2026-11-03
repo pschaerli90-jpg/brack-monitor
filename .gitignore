@@ -14,4 +14,6 @@ node_modules/
 .auth/
 .codex/
 config/limits.local.json
+config/telegram.local.json
+*.local.json
 .test-*/
