@@ -1,12 +1,19 @@
 # BRACK Pokémon Monitor
 
-Eigenständiges Node.js-Projekt (Node 20+) ohne externe Laufzeitpakete. Der neue
-Scanner liest die öffentliche BRACK-Liste. Vier getrennte Konten, Sitzungen und
-Warenkörbe bleiben **Simulationen**. Der bisherige Vier-Konten-Aufruf erzeugt
+Eigenständiges Node.js-Projekt (Node 20+). Die bisherigen Scanner- und Telegram-
+Aufrufe benötigen keine externen Laufzeitpakete. Der Scanner liest die öffentliche
+BRACK-Liste. Im bisherigen Vier-Konten-Aufruf bleiben Konten, Sitzungen und
+Warenkörbe **Simulationen**. Dieser Aufruf erzeugt
 weiterhin nur gespeicherte Telegram-Vorschauen. Die neue separate
 Benachrichtigungs-CLI kann echte Produktmeldungen senden, siehe
 [Telegram-Produktmeldungen](docs/telegram.md).
-Es gibt keinen Schalter für reale Logins, Warenkorbänderungen oder Bestellungen.
+Der neue, ausdrücklich aufzurufende [Kontomodus](docs/brack-accounts.md) nutzt
+optional Playwright für vier getrennte echte Sitzungen und beginnt im reinen
+Lesetest. Seine BRACK-Schnittstellen müssen lokal verifiziert konfiguriert werden;
+das Beispiel ist absichtlich nicht betriebsbereit. Schreibzugriffe benötigen
+zusätzlich eine gesonderte, befristete lokale Freigabe. Es gibt keinen Checkout
+und keinen Bestellabschluss. Echte Sitzungen/Warenkorbzugriffe wurden hier
+**nicht live verifiziert**.
 WOG und Changedetection werden weder angesprochen noch konfiguriert.
 
 ## Ausführen
@@ -175,6 +182,8 @@ Alle Tests verwenden lokale Daten und injizierte Transporte; sie benötigen wede
 BRACK-Zugriff noch Zugangsdaten. GitHub Actions ist für Node 20, 22 und 24
 konfiguriert. Den Scanner-Stand dokumentiert [docs/validation.md](docs/validation.md),
 die Telegram-Erweiterung [docs/telegram-validation.md](docs/telegram-validation.md).
+Den neuen Kontoadapter und seine Live-Grenzen dokumentiert
+[docs/brack-accounts-validation.md](docs/brack-accounts-validation.md).
 
 Vor produktivem Betrieb fehlen insbesondere:
 
@@ -182,10 +191,12 @@ Vor produktivem Betrieb fehlen insbesondere:
    echter Mehrseitenfälle und tatsächlich angebotener Jubiläumsprodukte.
 2. Verifizierte Bestell-, Konto-, Produktgruppen-, Haushalts- und Zeitraumlimits
    von BRACK sowie Bedeutung und Aktualität der Bestandsangaben.
-3. Ein separat freizugebender realer Vier-Konten-Adapter mit sicher verwalteten
-   Sitzungen, Ablauf/Erneuerung, serverseitigem Warenkorbabgleich und Behandlung
-   unklarer Ergebnisse nach einem Prozessabbruch. Hier existieren ausschliesslich
-   Mocks; die vier IDs sind keine verbundenen BRACK-Konten.
+3. Die lokale Integration und Live-Validierung des neuen Vier-Konten-Adapters:
+   tatsächliche authentifizierte BRACK-Endpunkte, Identitäts-/Warenkorbschema,
+   verbindliche Mengenregeln sowie bedingtes Setzen einer Gesamtmenge.
+   Implementiert sind Sitzungsisolation, sicherer Lesetest, Freigabesicherung
+   und Wiederanlaufbehandlung; die bisherigen vier Mock-IDs bleiben Simulationen.
+   Anleitung und Grenzen: [Kontobetrieb](docs/brack-accounts.md).
 4. Sichere lokale Telegram-Konfiguration und ein bewusst gestarteter, manuell
    freigegebener Benachrichtigungsprozess. Der separate echte Transport ist
    implementiert, wurde hier aber ohne reale Zugangsdaten und mit simulierten

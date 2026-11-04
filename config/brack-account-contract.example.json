@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "origin": "https://www.brack.ch",
+  "reviewed": false,
+  "reviewedAt": null,
+  "identity": {
+    "path": null,
+    "subject": null,
+    "cartId": null
+  },
+  "cart": {
+    "path": null,
+    "cartId": null,
+    "items": null,
+    "productId": null,
+    "quantity": null,
+    "complete": null
+  },
+  "product": null,
+  "limitSemantics": null,
+  "write": null
+}

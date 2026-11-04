@@ -23,7 +23,7 @@ function initialise(state, mode, source) {
   for (const [id, entry] of Object.entries(box.entries)) {
     if (!record(entry) || !statuses.includes(entry.status) || !integer(entry.attempts) || !date(entry.firstSeenAt) ||
         entry.product?.id !== id || !date(entry.nextAttemptAt) ||
-        entry.text !== discoveryMessage(entry.product, { discoveredAt: entry.firstSeenAt }) ||
+        entry.text !== discoveryMessage(entry.product, { discoveredAt: entry.firstSeenAt, cartResults: entry.cartResults }) ||
         (entry.lastError !== undefined && !safeErrors.includes(entry.lastError)) ||
         (entry.status === 'sending' && !date(entry.attemptStartedAt)) ||
         (entry.status === 'sent' && !date(entry.sentAt)) ||
@@ -38,7 +38,7 @@ function initialise(state, mode, source) {
 
 // One durable record per BRACK article, independently of all four mock carts.
 export async function runDiscoveryMonitor({ scanner, telegram, store, source = 'brack', now = () => new Date(),
-  random = Math.random, maxAttempts = 5, baseline = false, retryFailed, acknowledgeUncertain, log = jsonLogger }) {
+  random = Math.random, maxAttempts = 5, baseline = false, retryFailed, acknowledgeUncertain, log = jsonLogger, cartProcessor }) {
   if (scanner.mode !== 'read-only' || !['telegram', 'test'].includes(telegram.mode) ||
       !['brack', 'fixture'].includes(source) || (source === 'fixture' && telegram.mode === 'telegram') ||
       !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20) throw new Error('Ungültiger Benachrichtigungsmodus');
@@ -98,7 +98,16 @@ export async function runDiscoveryMonitor({ scanner, telegram, store, source = '
     }
     // Discovery and recovery must be durable before any outbound POST.
     await store.save(state);
-    const queue = Object.values(box.entries).filter(e => e.status === 'pending')
+    if (cartProcessor && summary.scanSucceeded) {
+      Object.assign(summary, await cartProcessor.process({ state, box, currentProducts: products, store, now }));
+      for (const entry of Object.values(box.entries)) {
+        if (entry.status === 'pending' && entry.attempts === 0) {
+          entry.text = discoveryMessage(entry.product, { discoveredAt: entry.firstSeenAt, cartResults: entry.cartResults });
+        }
+      }
+      await store.save(state);
+    }
+    const queue = Object.values(box.entries).filter(e => e.status === 'pending' && (!cartProcessor || e.cartResults !== undefined))
       .sort((a, b) => priority(b.product) - priority(a.product) || Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt));
     for (const entry of queue) {
       if (Date.parse(box.pausedUntil) > now().getTime() || Date.parse(entry.nextAttemptAt) > now().getTime()) continue;
