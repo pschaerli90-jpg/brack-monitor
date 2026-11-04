@@ -17,7 +17,7 @@ export function notificationOptions(args) {
       else options[name] = value;
     }
   }
-  if (!Number.isSafeInteger(options.intervalMs) || options.intervalMs < 60000 || options.intervalMs > 2147483647 ||
+  if (!Number.isSafeInteger(options.intervalMs) || options.intervalMs < 30000 || options.intervalMs > 2147483647 ||
       (options.mode === 'telegram' && options.fixture) || (options.mode === 'test' && options.config) ||
       (options.retryFailed && options.acknowledgeUncertain) ||
       (options.baseline && (options.retryFailed || options.acknowledgeUncertain)) ||

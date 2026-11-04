@@ -45,7 +45,13 @@ lokales HTML und ist nur im Testmodus erlaubt. Echte Zustellung mit einer Fixtur
 wird bereits beim Start abgewiesen.
 
 Ein Aufruf führt einen Scan aus. `--watch` wartet jeden Lauf vollständig ab und
-pausiert anschliessend mindestens 60 Sekunden. BRACK-Wartezeiten können
+pausiert anschliessend standardmässig 60 Sekunden. Mit
+`npm run notify:brack -- --telegram --watch --interval-seconds 30` sind
+30 Sekunden Pause nach dem vollständigen Lauf möglich; kürzere Intervalle
+werden abgewiesen. Neue Meldungen werden im selben Lauf ohne zusätzliche
+Intervallpause verarbeitet, soweit keine Zustellsperre besteht. Die vier echten
+Warenkörbe sind weiterhin nicht implementiert. Der bisherige Lesescanner
+behält seine Mindestpause von 60 Sekunden. BRACK-Wartezeiten können
 diese Pause verlängern. Telegram-Pausen sperren nur den Versand; neue Artikel
 werden währenddessen weiterhin erkannt und gespeichert. SIGINT/SIGTERM beenden nach dem laufenden begrenzten
 Aufruf. Es wird kein Hintergrunddienst installiert oder gestartet.
