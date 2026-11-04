@@ -1,13 +1,14 @@
 import { mkdir, readFile, rename, open, unlink } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 export class Store {
-  constructor(directory) {
+  constructor(directory, { rootDirectory = root } = {}) {
     this.directory = resolve(directory);
-    if (!this.directory.startsWith(root)) throw new Error('Zustand muss innerhalb brack-monitor liegen');
+    const location = relative(resolve(rootDirectory), this.directory);
+    if (location.startsWith('..') || isAbsolute(location)) throw new Error('Zustand muss innerhalb brack-monitor liegen');
     this.path = join(this.directory, 'state.json');
   }
   async locked(action) {
