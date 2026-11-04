@@ -12,6 +12,11 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('Neue CLI ist standardmässig simuliert und akzeptiert nur ausdrückliche echte Zustellung', () => {
   assert.equal(notificationOptions([]).mode, 'test');
+  assert.equal(notificationOptions([]).intervalMs, 60000);
+  assert.equal(notificationOptions(['--telegram', '--watch', '--interval-seconds', '30']).intervalMs, 30000);
+  for (const seconds of ['0', '-1', '29', '29.999', 'NaN']) {
+    assert.throws(() => notificationOptions(['--interval-seconds', seconds]));
+  }
   assert.equal(notificationOptions(['--telegram']).mode, 'telegram');
   const options = notificationOptions(['--test', '--fixture', 'fixture.html', '--watch', '--interval-seconds', '120', '--baseline']);
   assert.equal(options.mode, 'test');
@@ -31,7 +36,7 @@ test('Komplette Fixture-CLI simuliert einmal, übersteht Neustart und liest kein
   const fixture = directory + '/listing.html';
   await writeFile(fixture, listing());
   const stateDir = directory + '/state';
-  const args = ['src/telegram-cli.js', '--fixture', fixture, '--state-dir', stateDir];
+  const args = ['src/telegram-cli.js', '--fixture', fixture, '--state-dir', stateDir, '--interval-seconds', '30'];
   const env = { ...process.env, BRACK_TELEGRAM_CONFIG: directory + '/does-not-exist',
     TELEGRAM_BOT_TOKEN: 'must-not-be-read', TELEGRAM_CHAT_ID: 'must-not-be-logged' };
   delete env.NODE_TEST_CONTEXT; // The CLI is a normal process, not another test-runner child.

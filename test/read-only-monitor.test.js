@@ -181,7 +181,7 @@ test('Scheduler wartet auf jeden Scan, reagiert auf Abbruch und stoppt bei Zugri
     sleep: async () => { assert.equal(calls, 1); abort.abort(); } });
   assert.equal(result.completed, 1);
   await runLoop({ watch: true, run: async () => ({ halted: true }), sleep: async () => assert.fail('Zugriffsschutz muss stoppen') });
-  await assert.rejects(runLoop({ run: async () => {}, intervalMs: 1000 }), /60 Sekunden/);
+  await assert.rejects(runLoop({ run: async () => {}, intervalMs: 1000 }), /30 Sekunden/);
 });
 
 test('Retry-After über dem HTTP-Wartelimit verschiebt auch den nächsten geplanten Scan', async t => {

@@ -23,6 +23,8 @@ try {
       else intervalMs = Number(value) * 1000;
     } else throw new Error('Unbekanntes Argument: ' + arg + '. Nur Lesemodus verfügbar.');
   }
+  // Preserve the existing read-only scanner's minimum independently of Telegram.
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 60000) throw new Error('Scanintervall muss mindestens 60 Sekunden betragen');
   const policy = limitsFile ? await TestLimitsPolicy.fromFile(limitsFile) : null;
   const http = fixture ? { get: async () => readFile(fixture, 'utf8') } : undefined;
   const scanner = new BrackScanner({ http, policy });
