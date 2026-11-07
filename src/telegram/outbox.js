@@ -1,4 +1,4 @@
-import { priority } from '../filter.js';
+import { notificationSelected } from '../filter.js';
 import { jsonLogger } from '../monitor.js';
 import { discoveryMessage, discoveryProduct } from './message.js';
 import { TelegramDeliveryError } from './client.js';
@@ -10,20 +10,43 @@ const statuses = ['pending', 'sending', 'sent', 'uncertain', 'failed', 'suppress
 const safeErrors = ['rate_limited', 'rejected', 'unauthorized', 'forbidden', 'network_before_send',
   'delivery_unknown', 'invalid_message', 'delivery_unknown_after_restart'];
 
+// Validate the original persisted v1 payload before migrating it. Never resend it.
+function legacyMessage(p, at, results) {
+  discoveryProduct(p);
+  let text = 'Neues BRACK Pokémon-TCG-Produkt\nProdukt: ' + p.name +
+    '\nArtikelnummer: ' + p.id + '\nSprache: ' + ({ en: 'Englisch', de: 'Deutsch' })[p.language] +
+    '\nLagerbestand (bei Erkennung): ' + (p.stock === null ? 'unbekannt' : p.stock) +
+    '\nLink: ' + p.url + (at ? '\nErkannt am: ' + at : '');
+  if (results !== undefined) {
+    if (!Array.isArray(results) || results.length !== 4) throw new Error('Ungültiger gespeicherter Auftrag');
+    text += '\n\nBRACK-Konten (kein Checkout):';
+    for (const [i, r] of results.entries()) {
+      const label = { 'read-only': 'nur gelesen, keine Änderung', verified: 'Warenkorb geprüft',
+        blocked: 'gesperrt, nicht befüllt', failed: 'Lesen fehlgeschlagen', uncertain: 'Ausgang unklar, keine Wiederholung' }[r.status];
+      if (r.accountId !== 'brack-account-' + (i + 1) || !label) throw new Error('Ungültiger gespeicherter Auftrag');
+      text += '\n' + r.accountId + ': ' + label + (r.quantity !== undefined ? '; Menge ' + r.quantity : '') +
+        (r.status === 'read-only' && r.targetQuantity !== undefined ? '; möglicher Zielwert ' + r.targetQuantity : '') +
+        (r.checkedAt ? '; geprüft ' + r.checkedAt : '');
+    }
+  }
+  return text;
+}
+
 function initialise(state, mode, source) {
   if (state.multi || Object.keys(state.products).length) throw new Error('Separaten Zustand für Produktmeldungen verwenden');
   if (!Object.hasOwn(state, 'discovery')) state.discovery = {
-    version: 1, mode, source, initialScanAt: null, pausedUntil: null, entries: {}
+    version: 2, mode, source, initialScanAt: null, pausedUntil: null, entries: {}, seen: {}, needsBaseline: false, nextOrder: 0
   };
   const box = state.discovery;
-  if (!record(box) || box.version !== 1 || box.mode !== mode || box.source !== source || !record(box.entries) ||
+  if (!record(box) || ![1, 2].includes(box.version) || box.mode !== mode || box.source !== source || !record(box.entries) ||
       (box.initialScanAt !== null && !date(box.initialScanAt)) || (box.pausedUntil !== null && !date(box.pausedUntil))) {
     throw new Error('Ungültiger oder inkompatibler Telegram-Zustand; kein automatisches Zurücksetzen');
   }
+  const legacy = box.version === 1;
   for (const [id, entry] of Object.entries(box.entries)) {
     if (!record(entry) || !statuses.includes(entry.status) || !integer(entry.attempts) || !date(entry.firstSeenAt) ||
         entry.product?.id !== id || !date(entry.nextAttemptAt) ||
-        entry.text !== discoveryMessage(entry.product, { discoveredAt: entry.firstSeenAt, cartResults: entry.cartResults }) ||
+        (legacy ? entry.text !== legacyMessage(entry.product, entry.firstSeenAt, entry.cartResults) : entry.text !== discoveryMessage(entry.product)) ||
         (entry.lastError !== undefined && !safeErrors.includes(entry.lastError)) ||
         (entry.status === 'sending' && !date(entry.attemptStartedAt)) ||
         (entry.status === 'sent' && !date(entry.sentAt)) ||
@@ -33,12 +56,30 @@ function initialise(state, mode, source) {
       throw new Error('Ungültiger gespeicherter Telegram-Auftrag');
     }
   }
+  if (legacy) {
+    box.version = 2; box.needsBaseline = true; box.seen = {}; box.nextOrder = 0;
+    for (const [id, entry] of Object.entries(box.entries)) {
+      entry.queueOrder = box.nextOrder++;
+      entry.legacyText = entry.text;
+      entry.product = discoveryProduct(entry.product);
+      entry.text = discoveryMessage(entry.product);
+      delete entry.cartResults;
+      box.seen[id] = { firstSeenAt: entry.firstSeenAt, lastSeenAt: entry.firstSeenAt };
+    }
+  }
+  if (!integer(box.nextOrder) || !record(box.seen) || typeof box.needsBaseline !== 'boolean' || Object.entries(box.seen).some(([id, value]) =>
+      !/^[1-9]\d*$/.test(id) || !record(value) || !date(value.firstSeenAt) || !date(value.lastSeenAt))) {
+    throw new Error('Ungültiger gespeicherter Artikelbestand');
+  }
+  const orders = Object.values(box.entries).map(e => e.queueOrder);
+  if (orders.some(n => !integer(n) || n >= box.nextOrder) || new Set(orders).size !== orders.length) throw new Error('Ungültiger gespeicherter Auftragsrang');
   return box;
 }
 
+
 // One durable record per BRACK article, independently of all four mock carts.
 export async function runDiscoveryMonitor({ scanner, telegram, store, source = 'brack', now = () => new Date(),
-  random = Math.random, maxAttempts = 5, baseline = false, retryFailed, acknowledgeUncertain, log = jsonLogger, cartProcessor }) {
+  random = Math.random, maxAttempts = 5, baseline = false, retryFailed, acknowledgeUncertain, log = jsonLogger }) {
   if (scanner.mode !== 'read-only' || !['telegram', 'test'].includes(telegram.mode) ||
       !['brack', 'fixture'].includes(source) || (source === 'fixture' && telegram.mode === 'telegram') ||
       !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20) throw new Error('Ungültiger Benachrichtigungsmodus');
@@ -86,37 +127,54 @@ export async function runDiscoveryMonitor({ scanner, telegram, store, source = '
     summary.scanned = products.length;
     for (const p of products) {
       try {
-        if (!priority(p)) continue;
+        if (!/^[1-9]\d*$/.test(p.id)) throw new Error('Ungültige Artikelnummer');
+        const prior = box.seen[p.id];
+        const known = !!prior || Object.hasOwn(box.entries, p.id);
+        const firstSeenAt = prior?.firstSeenAt ?? now().toISOString();
+        if (!notificationSelected(p)) {
+          box.seen[p.id] = { firstSeenAt, lastSeenAt: now().toISOString() };
+          continue;
+        }
         const product = discoveryProduct(p);
-        if (Object.hasOwn(box.entries, product.id)) continue;
-        const firstSeenAt = now().toISOString();
-        const text = discoveryMessage(product, { discoveredAt: firstSeenAt });
+        const text = discoveryMessage(product);
+        box.seen[p.id] = { firstSeenAt, lastSeenAt: now().toISOString() };
+        if (Object.hasOwn(box.entries, product.id)) {
+          const entry = box.entries[product.id];
+          if (entry.status === 'pending' && !entry.product.imageUrl && product.imageUrl) {
+            entry.product.imageUrl = product.imageUrl;
+            delete entry.blockedReason;
+          }
+          continue;
+        }
+        const suppressed = baseline || box.needsBaseline || known;
         box.entries[product.id] = { product, text, firstSeenAt, nextAttemptAt: firstSeenAt,
-          status: baseline ? 'suppressed' : 'pending', attempts: 0 };
-        summary.discovered++;
+          status: suppressed ? 'suppressed' : 'pending', attempts: 0, queueOrder: box.nextOrder++ };
+        if (!suppressed) {
+          summary.discovered++;
+          log({ event: 'discovery_product_detected', article: product.id, firstSeenAt });
+        }
       } catch { summary.failed++; log({ event: 'discovery_product_invalid' }); }
     }
+    if (summary.scanSucceeded) box.needsBaseline = false;
     // Discovery and recovery must be durable before any outbound POST.
     await store.save(state);
-    if (cartProcessor && summary.scanSucceeded) {
-      Object.assign(summary, await cartProcessor.process({ state, box, currentProducts: products, store, now }));
-      for (const entry of Object.values(box.entries)) {
-        if (entry.status === 'pending' && entry.attempts === 0) {
-          entry.text = discoveryMessage(entry.product, { discoveredAt: entry.firstSeenAt, cartResults: entry.cartResults });
-        }
-      }
-      await store.save(state);
-    }
-    const queue = Object.values(box.entries).filter(e => e.status === 'pending' && (!cartProcessor || e.cartResults !== undefined))
-      .sort((a, b) => priority(b.product) - priority(a.product) || Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt));
+    // All supported languages use the same chronological queue, with no language sort.
+    const queue = Object.values(box.entries).filter(e => e.status === 'pending')
+      .sort((a, b) => Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt) || a.queueOrder - b.queueOrder);
     for (const entry of queue) {
+      if (!entry.product.imageUrl) {
+        if (entry.blockedReason !== 'image_missing') log({ event: 'discovery_image_missing', article: entry.product.id });
+        entry.blockedReason = 'image_missing';
+        await store.save(state);
+        continue;
+      }
       if (Date.parse(box.pausedUntil) > now().getTime() || Date.parse(entry.nextAttemptAt) > now().getTime()) continue;
       if (entry.attempts >= maxAttempts) { entry.status = 'failed'; summary.failed++; await store.save(state); continue; }
       entry.status = 'sending'; entry.attempts++; entry.attemptStartedAt = now().toISOString();
       await store.save(state);
       let receipt;
       try {
-        receipt = await telegram.send(entry.text);
+        receipt = await telegram.send(entry.text, { imageUrl: entry.product.imageUrl });
         if (telegram.mode === 'test' ? receipt?.mode !== 'test' || receipt.simulated !== true :
           receipt?.mode !== 'telegram' || !integer(receipt.messageId) || receipt.messageId < 1) throw new Error('Invalid receipt');
       } catch (err) {

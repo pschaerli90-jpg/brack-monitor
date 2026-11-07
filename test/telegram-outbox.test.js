@@ -23,16 +23,16 @@ async function setup(t, products = [rawProduct()]) {
     entries: async () => (await deps.store.load()).discovery.entries };
 }
 
-test('Neue englische und deutsche Jubiläumsartikel werden ohne Mengenlimits einmal pro Artikel gemeldet', async t => {
+test('Alle passenden Sprachen werden ohne Priorität und Mengenlimits einmal pro Artikel gemeldet', async t => {
   const german = rawProduct(100002, { description: { nameWithoutManufacturer: '30 Jahre Jubiläum', shortTextList: ['Sprache: Deutsch'] } });
   const other = rawProduct(100003, { description: { nameWithoutManufacturer: 'Deutsch', shortTextList: ['Sprache: Deutsch'] } });
   const s = await setup(t, [german, other, rawProduct()]);
   const result = await runDiscoveryMonitor(s.deps);
-  assert.equal(result.simulated, 2);
-  assert.equal(result.discovered, 2);
-  assert.match(s.calls[0], /Sprache: Englisch/);
+  assert.equal(result.simulated, 3);
+  assert.equal(result.discovered, 3);
+  assert.match(s.calls[0], /Sprache: Deutsch/);
   assert.match(s.calls[1], /Sprache: Deutsch/);
-  assert.equal(Object.keys(await s.entries()).length, 2);
+  assert.equal(Object.keys(await s.entries()).length, 3);
   const state = await s.deps.store.load();
   assert.equal(state.multi, undefined); // No sessions or cart jobs participate in delivery.
   assert.deepEqual(state.products, {});
@@ -256,4 +256,128 @@ test('Telegram-Pause gilt nach ausgeschöpften Versuchen auch für andere Artike
   s.advance(60000);
   await runDiscoveryMonitor(s.deps);
   assert.equal(calls, 1);
+});
+
+function legacyEntry(p, status = 'sent') {
+  const firstSeenAt = '2026-11-03T12:00:00.000Z';
+  const text = 'Neues BRACK Pokémon-TCG-Produkt\nProdukt: ' + p.name + '\nArtikelnummer: ' + p.id +
+    '\nSprache: Englisch\nLagerbestand (bei Erkennung): 12\nLink: ' + p.url + '\nErkannt am: ' + firstSeenAt;
+  return { product: p, text, firstSeenAt, nextAttemptAt: firstSeenAt, status, attempts: 1,
+    ...(status === 'sent' ? { sentAt: firstSeenAt, receipt: { mode: 'test', simulated: true } } : {}) };
+}
+
+test('Migration von v1 meldet weder bekannte EN noch neu berechtigte DE/FR-Bestandsartikel erneut', async t => {
+  const s = await setup(t);
+  const p = (await s.deps.scanner.scan())[0];
+  delete p.imageUrl;
+  const entry = legacyEntry(p);
+  await s.deps.store.save({ version: 1, products: {}, discovery: { version: 1, mode: 'test', source: 'fixture',
+    initialScanAt: entry.firstSeenAt, pausedUntil: null, entries: { [p.id]: entry } } });
+  const fr = rawProduct(100002, { description: { nameWithoutManufacturer: 'Français', shortTextList: ['Sprache: Französisch'] } });
+  const de = rawProduct(100003, { description: { nameWithoutManufacturer: 'Deutsch', shortTextList: ['Sprache: Deutsch'] } });
+  s.deps.scanner.http.get = async () => listing([rawProduct(), fr, de]);
+  assert.equal((await runDiscoveryMonitor(s.deps)).simulated, 0);
+  const state = await s.deps.store.load();
+  assert.equal(state.discovery.version, 2);
+  assert.equal(state.discovery.entries['100001'].attempts, 1);
+  assert.deepEqual(state.discovery.entries['100001'].receipt, entry.receipt);
+  assert.equal(state.discovery.entries['100002'].status, 'suppressed');
+  assert.equal(state.discovery.entries['100003'].status, 'suppressed');
+  s.deps.store = new Store(s.deps.store.directory);
+  s.deps.scanner.http.get = async () => listing([rawProduct(), fr, de, rawProduct(100004)]);
+  assert.equal((await runDiscoveryMonitor(s.deps)).simulated, 1);
+  assert.equal(s.calls.length, 1);
+  assert.match(s.calls[0], /100004/);
+  assert.ok(!s.calls[0].includes('Erkannt am'));
+});
+
+test('Gescheiterter Scan beendet die Migrationsbaseline nicht und unklare Zustellung bleibt angehalten', async t => {
+  const s = await setup(t), p = (await s.deps.scanner.scan())[0];
+  const entry = legacyEntry(p, 'sending');
+  entry.attemptStartedAt = entry.firstSeenAt;
+  await s.deps.store.save({ version: 1, products: {}, discovery: { version: 1, mode: 'test', source: 'fixture',
+    initialScanAt: entry.firstSeenAt, pausedUntil: null, entries: { [p.id]: entry } } });
+  s.deps.scanner.http.get = async () => { throw new Error('synthetic scan failure'); };
+  await runDiscoveryMonitor(s.deps);
+  assert.equal((await s.deps.store.load()).discovery.needsBaseline, true);
+  s.deps.scanner.http.get = async () => listing([rawProduct(), rawProduct(100002)]);
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 0);
+  assert.equal((await s.entries())['100001'].status, 'uncertain');
+  assert.equal((await s.entries())['100002'].status, 'suppressed');
+});
+
+test('Fehlendes Bild bleibt ohne Telegram-Versuch vorgemerkt und wird später einmal mit echtem Bild gemeldet', async t => {
+  const s = await setup(t, [rawProduct(100001, { images: [] })]);
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 0);
+  assert.equal((await s.entries())['100001'].attempts, 0);
+  assert.equal((await s.entries())['100001'].blockedReason, 'image_missing');
+  const before = (await s.entries())['100001'].firstSeenAt;
+  let image;
+  s.deps.telegram.send = async (text, options) => { image = options.imageUrl; s.calls.push(text); return { mode: 'test', simulated: true }; };
+  s.deps.scanner.http.get = async () => listing();
+  await runDiscoveryMonitor(s.deps);
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 1);
+  assert.ok(image.startsWith('https://assets.brack.ch/images2/'));
+  assert.equal((await s.entries())['100001'].firstSeenAt, before);
+  assert.ok(s.logs.some(e => e.event === 'discovery_product_detected' && e.firstSeenAt === before));
+});
+
+test('Sprachen haben gleiche Behandlung in Scanreihenfolge; andere Marken/Sprachen bleiben ausgeschlossen', async t => {
+  const lang = (id, language) => rawProduct(id, { description: { nameWithoutManufacturer: language, shortTextList: ['Sprache: ' + language] } });
+  const s = await setup(t, [lang(100003, 'Französisch'), lang(100002, 'Deutsch'), rawProduct(), lang(100004, 'Japanisch'),
+    rawProduct(100005, { manufacturer: { name: 'other' }, description: { nameWithoutManufacturer: 'other', shortTextList: ['Sprache: Englisch'] } })]);
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 3);
+  assert.match(s.calls[0], /Französisch \(FR\)/);
+  assert.match(s.calls[1], /Deutsch \(DE\)/);
+  assert.match(s.calls[2], /Englisch \(EN\)/);
+  const firstSeenAt = (await s.entries())['100003'].firstSeenAt;
+  assert.ok(firstSeenAt);
+  assert.ok(s.calls.every(text => !text.includes(firstSeenAt)));
+});
+
+test('Bereits beobachtete zuvor ausgeschlossene Artikel werden bei Sprachänderung nicht neu gemeldet', async t => {
+  const s = await setup(t, [rawProduct(100001, { description: { nameWithoutManufacturer: 'JP', shortTextList: ['Sprache: Japanisch'] } })]);
+  await runDiscoveryMonitor(s.deps);
+  s.deps.scanner.http.get = async () => listing();
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 0);
+  assert.equal((await s.entries())['100001'].status, 'suppressed');
+});
+
+test('Beschädigter v1-Nachrichtentext wird nicht als gültige Migration übernommen', async t => {
+  const s = await setup(t), p = (await s.deps.scanner.scan())[0];
+  const entry = legacyEntry(p); entry.text += 'tampered';
+  const state = { version: 1, products: {}, discovery: { version: 1, mode: 'test', source: 'fixture',
+    initialScanAt: entry.firstSeenAt, pausedUntil: null, entries: { [p.id]: entry } } };
+  await s.deps.store.save(state);
+  const before = await readFile(s.deps.store.path, 'utf8');
+  await assert.rejects(runDiscoveryMonitor(s.deps), /Ungültiger gespeicherter/);
+  assert.equal(await readFile(s.deps.store.path, 'utf8'), before);
+  assert.equal(s.calls.length, 0);
+});
+
+test('Vorübergehend ungültiges neues Produkt wird nach Datenkorrektur noch erstmals gemeldet', async t => {
+  const s = await setup(t), p = (await s.deps.scanner.scan())[0];
+  s.deps.scanner.scan = async () => [{ ...p, stock: -1 }];
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 0);
+  s.deps.scanner.scan = async () => [p];
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 1);
+});
+
+test('Langer früher gültiger Name blockiert die Migration einer bereits zugestellten Nachricht nicht', async t => {
+  const s = await setup(t), p = (await s.deps.scanner.scan())[0];
+  p.name = 'x'.repeat(2000);
+  const entry = legacyEntry(p);
+  await s.deps.store.save({ version: 1, products: {}, discovery: { version: 1, mode: 'test', source: 'fixture',
+    initialScanAt: entry.firstSeenAt, pausedUntil: null, entries: { [p.id]: entry } } });
+  await runDiscoveryMonitor(s.deps);
+  assert.equal(s.calls.length, 0);
+  assert.equal((await s.entries())['100001'].product.name.length, 2000);
+  assert.ok((await s.entries())['100001'].text.length <= 1024);
 });

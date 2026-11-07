@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { parseListing, BRACK_URL } from '../src/brack/parser.js';
 import { BrackScanner } from '../src/brack/scanner.js';
 import { TestLimitsPolicy } from '../src/brack/limits-policy.js';
-import { priority } from '../src/filter.js';
+import { priority, notificationSelected } from '../src/filter.js';
 import { listing, rawProduct, NOW, EXPIRY } from './helpers/brack.js';
 
 test('Echtes bereinigtes BRACK-Schema: 32 stabile Artikel in Server-Reihenfolge', async () => {
@@ -14,6 +14,7 @@ test('Echtes bereinigtes BRACK-Schema: 32 stabile Artikel in Server-Reihenfolge'
   assert.equal(page.products[0].id, '2179871');
   assert.equal(page.products[1].language, 'unknown'); // Japanese card, German website
   assert.equal(page.products.filter(p => priority(p)).length, 0);
+  assert.deepEqual(page.products.filter(notificationSelected).map(p => p.language), ['fr', 'de', 'fr', 'fr', 'fr', 'fr']);
   assert.equal(page.products.find(p => p.id === '2151394').stock, 0);
   assert.equal(page.next, null);
 });

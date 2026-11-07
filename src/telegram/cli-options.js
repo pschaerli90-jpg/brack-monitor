@@ -1,5 +1,5 @@
 export function notificationOptions(args) {
-  const options = { mode: 'test', watch: false, intervalMs: 60000, baseline: false };
+  const options = { mode: 'test', watch: false, intervalMs: 30000, baseline: false };
   const seen = new Set();
   const flags = { '--test': ['mode', 'test'], '--telegram': ['mode', 'telegram'], '--watch': ['watch', true], '--baseline': ['baseline', true] };
   const values = { '--config': 'config', '--fixture': 'fixture', '--interval-seconds': 'interval',

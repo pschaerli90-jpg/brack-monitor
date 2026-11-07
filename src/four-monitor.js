@@ -2,8 +2,6 @@ import { priority, validateProduct } from './filter.js';
 import { validateAccounts } from './accounts.js';
 import { jsonLogger } from './monitor.js';
 import { preparationMessage } from './notification.js';
-import { runDiscoveryMonitor } from './telegram/outbox.js';
-import { cartProcessor } from './brack/cart-processor.js';
 
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -72,11 +70,7 @@ function deferStale(job, summary) {
 
 // Shared scan and durable queue; the exclusive store lock covers the whole run.
 export async function runFourMonitor({ scanner, accounts, adapter, telegram, store, log = jsonLogger,
-  now = () => new Date(), maxSnapshotAgeMs = 60000, baseline = false }) {
-  if (adapter?.mode === 'brack-real') {
-    return adapter.runExclusive(() => runDiscoveryMonitor({ scanner, telegram, store, log, now, baseline,
-      cartProcessor: cartProcessor({ accounts, adapter }) }));
-  }
+  now = () => new Date(), maxSnapshotAgeMs = 60000 }) {
   validateAccounts(accounts);
   const readOnly = scanner.mode === 'read-only';
   if (!integer(maxSnapshotAgeMs) || maxSnapshotAgeMs === 0) throw new Error('Ungültige Aktualitätsgrenze');

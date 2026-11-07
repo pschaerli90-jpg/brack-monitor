@@ -15,8 +15,5 @@
     "productId": null,
     "quantity": null,
     "complete": null
-  },
-  "product": null,
-  "limitSemantics": null,
-  "write": null
+  }
 }

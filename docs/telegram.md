@@ -1,195 +1,110 @@
-# Unabhängige Telegram-Produktmeldungen
+# Telegram: Pokémon EN/DE/FR mit BRACK-Produktbild
 
-Die neue CLI verwendet denselben `BrackScanner` wie der bestehende Lesescanner.
-Sie hat einen eigenen Zustand und ruft keine Sitzungs- oder Warenkorbadapter auf.
-`npm start`, `scan:brack` und `monitor:brack` behalten ihr bisheriges Verhalten.
-An laufenden VPS-Prozessen, WOG und Changedetection wird nichts geändert.
-Das Repository enthält keine Deployment-Automation.
+Der vorhandene BrackScanner liest die öffentliche Sammelkartenliste. Die
+Benachrichtigungs-Outbox wählt Pokémon in Englisch, Deutsch und Französisch aus,
+ohne Sprachpriorität und ohne Beschränkung auf eine deutsche Serie. Andere
+Marken sowie unbekannte/mehrdeutige Sprachen bleiben ausgeschlossen.
 
-## Meldung und Auswahl
+## Inhalt und Bilder
 
-Jede erstmals erkannte Artikelnummer eines passenden englischen Pokémon-TCG-
-Produkts oder deutschen Produkts der Serie «30 Jahre Jubiläum» erzeugt genau
-einen persistenten Meldungsauftrag. Englisch hat Vorrang. Andere Produkte werden
-ignoriert. Die Meldung benötigt weder bekannte Mengenlimits noch einen
-vorbereiteten Warenkorb und wird auch bei Bestand null oder unbekannt erzeugt.
+Eine neue Artikelnummer erzeugt einen gespeicherten Auftrag. Telegram erhält
+sendPhoto mit dem echten MAIN-Bild aus den öffentlichen BRACK-Listendaten und
+folgendem Bildtext:
 
-```text
-Neues BRACK Pokémon-TCG-Produkt
-Produkt: Pokémon English Booster
+~~~text
+Neues BRACK Pokémon-Produkt
+Produkt: Beispielprodukt
 Artikelnummer: 100001
-Sprache: Englisch
+Sprache: Französisch (FR)
 Lagerbestand (bei Erkennung): 12
-Link: https://www.brack.ch/pokemon-english-booster-100001
-Erkannt am: 2026-11-03T12:00:00.000Z
-```
+Link: https://www.brack.ch/beispielprodukt-100001
+~~~
 
-Bestand und Produktname stammen aus dem unveränderlichen Erkennungssnapshot.
-Eine später wiederholte Nachricht behauptet deshalb keinen aktuellen Bestand.
-Titeländerungen, Wiederverfügbarkeit und wiederholte Scans derselben Artikelnummer
-erzeugen keine weitere Meldung. Es entstehen keine vier Meldungen je Konto.
-Die Nachricht ist Klartext ohne Telegram-HTML-/Markdown-Interpretation.
+Die Bildadresse wird aus images[].sizes[].src übernommen, nicht aus der
+Artikelnummer konstruiert. Verifiziertes Asset-Schema: HTTPS auf assets.brack.ch
+unter /images2/. Fremde Hosts,
+Benutzerinformationen und unsichere URLs werden nicht als Ersatz verwendet.
+Telegram lädt diese öffentliche URL selbst. Es gibt keinen lokalen Cookiezugriff
+für Bilder. Ein fehlendes Bild hält den Auftrag ohne Versandversuch zurück;
+spätere Scans können das echte Bild ergänzen. Keine Platzhalter und kein
+zusätzlicher Textversand bei unklarem Fotoergebnis.
 
-## Testmodus
+Name, Bestand und erste Erkennung stammen aus dem ursprünglichen Snapshot.
+Die Erkennungszeit wird intern als firstSeenAt und im Erkennungslog gespeichert,
+nicht in Telegram angezeigt. Sehr lange Namen werden mit Ellipse gekürzt, damit
+Bildtext samt allen übrigen Feldern in 1024 Zeichen passt; der vollständige Name
+bleibt intern gespeichert. Ein späterer Retry behauptet keinen aktuellen Bestand.
 
-```sh
-npm run notify:brack
-npm run notify:brack -- --fixture fixtures/brack-listing.html
-npm run notify:brack -- --test --watch --interval-seconds 120
-```
+## Start und sichere Konfiguration
 
-Standard ist immer `--test`: BRACK wird öffentlich gelesen, Telegram-Zustellung
-wird ausschliesslich simuliert. Dieser Modus lädt keine Telegram-Zugangsdaten,
-selbst wenn entsprechende Umgebungsvariablen vorhanden sind. `--fixture` liest
-lokales HTML und ist nur im Testmodus erlaubt. Echte Zustellung mit einer Fixture
-wird bereits beim Start abgewiesen.
+~~~sh
+npm run notify:brack -- --test --fixture fixtures/brack-listing.html
+npm run notify:brack -- --test --watch --interval-seconds 30
+~~~
 
-Ein Aufruf führt einen Scan aus. `--watch` wartet jeden Lauf vollständig ab und
-pausiert anschliessend standardmässig 60 Sekunden. Mit
-`npm run notify:brack -- --telegram --watch --interval-seconds 30` sind
-30 Sekunden Pause nach dem vollständigen Lauf möglich; kürzere Intervalle
-werden abgewiesen. Neue Meldungen werden im selben Lauf ohne zusätzliche
-Intervallpause verarbeitet, soweit keine Zustellsperre besteht. Die vier echten
-Warenkörbe sind weiterhin nicht implementiert. Der bisherige Lesescanner
-behält seine Mindestpause von 60 Sekunden. BRACK-Wartezeiten können
-diese Pause verlängern. Telegram-Pausen sperren nur den Versand; neue Artikel
-werden währenddessen weiterhin erkannt und gespeichert. SIGINT/SIGTERM beenden nach dem laufenden begrenzten
-Aufruf. Es wird kein Hintergrunddienst installiert oder gestartet.
+Der Testmodus liest keine Telegram-Zugangsdaten. Fixtures sind ausschliesslich in
+diesem Modus erlaubt. Echter Versand benötigt --telegram sowie entweder eine
+private lokale Datei mit botToken/chatId oder das vollständige lokale Paar
+TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID. Keine Token in CLI-Argumenten oder Git.
+Die Datei muss eine eigene reguläre Datei mit 0600 sein; Symlinks werden abgewiesen.
+Nicht mehrere Konfigurationsquellen mischen.
 
-## Sichere lokale Konfiguration für echte Zustellung
+~~~sh
+npm run notify:brack -- --telegram --config /privater/pfad/telegram.local.json --watch --interval-seconds 30
+~~~
 
-Echte Zustellung erfordert ausdrücklich `--telegram` und eine gültige lokale
-Konfiguration. Tokens und Chat-IDs gehören weder in CLI-Argumente noch in Logs,
-Fixtures, Issues, PRs oder GitHub. Keine echten Werte aus Beispielen übernehmen.
+Das ist eine Anleitung für eine spätere bewusste Inbetriebnahme. Es wird kein
+Hintergrunddienst installiert und kein laufender Dienst verändert. Lokaler
+Standardzustand für echten Versand: data/telegram-discovery; für Testversand:
+data/telegram-discovery-test; Fixtures: data/telegram-discovery-fixture.
+Ein bestehender --state-dir-Pfad muss bei der Umstellung beibehalten werden.
 
-Für eine spätere manuelle Inbetriebnahme unter Linux:
+Der Standard im Watch-Modus ist 30 Sekunden Pause nach abgeschlossenem Lauf.
+Kürzere Intervalle werden abgewiesen. Neue Meldungen werden vor dieser Pause
+verarbeitet. SIGINT/SIGTERM beenden nach dem laufenden begrenzten Aufruf.
+BRACK-Retry-After kann länger pausieren; CAPTCHA/Zugriffsschutz stoppt den Scan.
 
-```sh
-umask 077
-cp config/telegram.example.json config/telegram.local.json
-chmod 600 config/telegram.local.json
-# Datei mit einem lokalen Editor befüllen; keine Werte in die Shell-History schreiben.
-npm run notify:brack -- --telegram --config config/telegram.local.json
-```
+## Migration und Deduplizierung
 
-Die JSON-Datei hat ausschliesslich `botToken` und `chatId` als Zeichenketten.
-Erlaubt sind eine numerische Chat-ID, einschliesslich negativer Gruppen-IDs,
-oder ein Telegram-Kanalname mit `@`. Der Bot muss im Zielchat berechtigt sein;
-bei einem privaten Chat muss der Benutzer den Bot zuvor selbst gestartet haben.
+Vor Umstellung lokalen Zustand sichern. **Keine neue Outbox anlegen und keine
+Einträge löschen**, um eine Migration zu erzwingen. Zustände Version 1 werden
+unter der existierenden Dateisperre validiert und auf Version 2 umgestellt.
+Gesendete und unterdrückte Artikel bleiben erledigt; unklare/fehlgeschlagene
+Zustellungen behalten ihren Status, ebenso Quittungen, Versuchszähler und
+Zeitstempel. Alte Nachrichtentexte bleiben nur als interne Migrationshistorie.
 
-Alternativ kann `BRACK_TELEGRAM_CONFIG` den lokalen Dateipfad vorgeben. Die Datei
-muss regulär sein, dem Prozessbenutzer gehören, höchstens 16 KiB gross sein und
-darf keine Gruppen-/Fremdrechte besitzen (empfohlen 0600, auch 0400 ist möglich).
-Symbolische Links werden nicht verfolgt. Syntax-, Berechtigungs- und Lesefehler
-werden ohne Dateiinhalte ausgegeben. Die strikte Dateiprüfung richtet sich an
-POSIX/Linux, passend zum VPS.
+Version 1 speicherte keine Beobachtungen ausgeschlossener DE-/FR-Produkte. Darum
+bildet der erste vollständige Scan nach der Migration eine konservative Baseline
+für alle bisher nicht gespeicherten Artikel. Auch neu passende FR- oder normale
+DE-Bestandsartikel werden dabei nicht nachgemeldet. Gerade zwischen den Versionen
+neu erschienene Artikel können ebenfalls in diese Baseline fallen. Ohne einen
+vollständigen Scan bleibt sie offen. Erst danach melden spätere Scans neue IDs.
 
-Alternativ sind die beiden Prozessvariablen `TELEGRAM_BOT_TOKEN` und
-`TELEGRAM_CHAT_ID` gemeinsam zulässig, bereitgestellt durch eine sichere lokale
-Laufzeitkonfiguration. Keine automatische `.env`-Ladung. Teilkonfigurationen oder
-eine gleichzeitige Datei-/Variablenkonfiguration werden abgelehnt. Die Datei
-`config/telegram.local.json`, weitere `*.local.json` und `.env` sind Git-ignoriert.
-Der Code speichert weder Token noch Chat-ID im Zustand oder in Quittungen.
+Version 2 speichert alle beobachteten IDs. Eine spätere Änderung von Titel,
+Sprache oder Auswahl erzeugt keinen zweiten Auftrag. Ein neuer Zustand meldet
+standardmässig den ersten passenden Bestand; --baseline unterdrückt ihn bewusst.
+Eine bestehende Version-1-Outbox benötigt --baseline nicht nochmals. Ohne erhaltene
+Zustandsdateien ist eine Garantie gegen erneute Bestandsmeldungen nicht möglich.
 
-HTTP geht ausschliesslich an `https://api.telegram.org/.../sendMessage`:
-ein POST pro Versuch, keine Weiterleitung, Timeout 10 Sekunden einschliesslich
-Body, maximal 64 KiB Antwort. TLS-Prüfung bleibt aktiv. Auf Node 24.5+ kann in
-Umgebungen mit vorgeschriebenem HTTP-Proxy `NODE_USE_ENV_PROXY=1` nötig sein.
-Telegram verlangt den Token im HTTPS-URL-Pfad; der Client protokolliert weder
-diese URL noch rohe HTTP-/Netzwerkfehler oder Telegram-Beschreibungen.
+## Zustellschutz
 
-## Zustand und Deduplizierung
+Die exklusive Store-Sperre umfasst den ganzen Lauf. Vor dem einzigen POST pro
+Versuch wird sending dauerhaft gespeichert. Erfolgreiche Antworten werden anhand
+der Empfängeridentität und Nachrichten-ID verifiziert. Ein Absturz oder Timeout
+kann zu uncertain führen; dann wird nicht automatisch nachgesendet. Kein
+Exactly-once-Versprechen für Telegram.
 
-| Modus | Standard-Zustand |
-| --- | --- |
-| echte Zustellung | `data/telegram-discovery/state.json` |
-| Testzustellung mit BRACK-GET | `data/telegram-discovery-test/state.json` |
-| lokale Fixture | `data/telegram-discovery-fixture/state.json` |
+Bestätigte Nichtzustellung kann mit Backoff/Jitter begrenzt wiederholt werden.
+HTTP 429 speichert eine globale Telegram-Pause, auch über Neustarts hinweg.
+Die BRACK-Erkennung läuft während einer reinen Telegram-Pause weiter. 401/403
+stoppen die Zustellung. Fehler enthalten keine Tokens, Chat-IDs oder Rohantworten.
 
-`--state-dir` kann für isolierte lokale Tests ein anderes Verzeichnis innerhalb
-des Projekts wählen. Für einen Bot/Chat muss dauerhaft dasselbe kanonische
-Verzeichnis genutzt werden. Separate Kopien, neue Verzeichnisse oder mehrere
-Hosts teilen keine Deduplizierung. Der Zustand darf bei Neustarts oder einem
-späteren manuellen Release nicht gelöscht werden. Nach einer Änderung von Bot
-oder Zielchat muss die gewünschte Behandlung vorhandener Meldungen manuell
-geprüft werden; es findet keine automatische Migration oder erneute Zustellung
-abgeschlossener Artikel statt.
+--retry-failed ARTIKEL ist nur für bestätigte fehlgeschlagene Zustellung zulässig.
+--ack-uncertain ARTIKEL bestätigt eine zuvor manuell im Chat geprüfte unklare
+Zustellung ohne neuen POST. Beide Aktionen sind nicht kombinierbar. Test/Echtbetrieb,
+Quellen oder alte Mock-Warenkorbzustände dürfen nicht vermischt werden.
+Beschädigte Dateien und bestehende run.lock-Sperren werden nicht automatisch
+zurückgesetzt; Sperren erst nach Prozessprüfung manuell entfernen.
 
-Die neue `discovery`-Outbox ist vom bisherigen Vier-Konten-Zustand getrennt.
-Test-/Echtzustand und Fixture-/BRACK-Zustand können nicht verwechselt werden.
-Zustandsspeicherung und exklusive `run.lock` verwenden den vorhandenen `Store`
-mit atomarem Umbenennen, Dateirechten 0600 und Synchronisierung. Die Sperre
-umfasst Scan und gesamten Zustellablauf. Beschädigte Daten werden abgewiesen.
-Verwaiste Sperren erst nach Prüfung, dass kein Prozess mehr läuft, manuell
-entfernen. Kein automatisches Übernehmen einer möglicherweise aktiven Sperre.
-
-Aufträge stehen unter `discovery.entries[Artikelnummer]` und enthalten den
-Produktsnapshot, Nachrichtentext, Status, Versuche, Zeitstempel, einen sicheren
-Fehlercode und nach Erfolg ausschliesslich die Telegram-Nachrichten-ID.
-
-## Wiederholungen und unklare Zustellung
-
-Der Ablauf ist `pending -> sending -> sent`. Vor jedem POST wird `sending`
-dauerhaft gespeichert; nach bestätigtem Erfolg werden Status und Nachrichten-ID
-gespeichert. Abgeschlossene Artikel werden bei Neustart nicht wiederholt.
-Ein Speicherfehler nach einem erfolgreichen POST bricht den Lauf ab.
-
-Bestätigte 429-Ablehnungen sowie eindeutig vor dem Senden gescheiterte Verbindungen
-(DNS-Auflösung, Verbindungsablehnung, Verbindungsaufbau-Timeout) sind wiederholbar.
-Die Outbox verwendet 30 Sekunden exponentiellen Backoff bis 30 Minuten plus
-Jitter, maximal fünf Versuche über Neustarts hinweg. Telegram `retry_after` und
-HTTP `Retry-After` können die Pause verlängern. Die Pause gilt für den gesamten
-Chat, auch für neue Artikel und nach ausgeschöpften Versuchen eines Artikels.
-Beim Einzelaufruf erfolgt ein fälliger Versuch je Artikel; weitere Versuche
-erfolgen beim nächsten Aufruf oder im ausdrücklich aktivierten Watch-Modus.
-
-Bestätigte 400/401/403/404-Ablehnungen bleiben `failed`. 401/403 und ungültige
-Rate-Limit-Angaben stoppen den Watch-Modus. Nach Behebung der Ursache kann ein
-bestätigt fehlgeschlagener Auftrag ausdrücklich erneut versucht werden:
-
-```sh
-npm run notify:brack -- --telegram --config config/telegram.local.json --retry-failed 100001
-```
-
-Telegram bietet für `sendMessage` keinen clientseitigen Idempotenzschlüssel.
-Nach allgemeinem Timeout, Verbindungsabbruch, 5xx, ungültiger Antwort oder einem
-Prozessabbruch während `sending` ist Erfolg möglicherweise bereits eingetreten.
-Solche Aufträge werden **`uncertain`** und nicht automatisch erneut gesendet.
-Damit wird keine unhaltbare Exactly-once-Garantie behauptet. Die Priorität liegt
-auf dem Verhindern vermeidbarer Doppelmeldungen; eine tatsächlich ausgebliebene
-Nachricht kann deshalb bis zur manuellen Klärung fehlen.
-
-Unklare Aufträge im Zielchat manuell prüfen. Ist die Nachricht dort vorhanden,
-kann der lokale Zustand ohne neue Zustellung bestätigt werden:
-
-```sh
-npm run notify:brack -- --telegram --config config/telegram.local.json --ack-uncertain 100001
-```
-
-`--retry-failed` akzeptiert keine unklaren Aufträge. Für sie gibt es keinen
-automatischen oder unbestätigten Nachsende-Schalter. Bei nachweislich fehlender
-Zustellung ist eine gesonderte manuelle Klärung notwendig. Zustand nicht einfach
-löschen. Allgemeine Erreichbarkeitsfehler oder unklare Zustellung stoppen den
-aktuellen Sendebatch; später neue Artikel können weiter bearbeitet werden,
-während unklare Artikel angehalten bleiben. Bereits wartende sichere
-Wiederholungen funktionieren auch bei einem späteren BRACK-Scanfehler.
-
-## Erstbestand und Betrieb
-
-Ein leerer neuer Zustand behandelt alle aktuell passenden Artikel als erstmals
-erkannt. Wer beim späteren manuellen Start nur nachfolgend neue Artikel melden
-möchte, kann vor der ersten erfolgreichen Erfassung ausdrücklich `--baseline`
-verwenden. Der erste Bestand wird dann als `suppressed` gespeichert, ohne
-Nachrichtenversand. Ein erneutes Baseline-Setzen wird abgewiesen. Die alten
-VPS-Beobachtungen werden nicht gelesen oder migriert.
-
-Logs enthalten Modus, Artikelnummern, Zähler und sichere Fehlercodes. Fehlende
-Konfiguration, Zustands-/Scanfehler, Zustellfehler oder angehaltene Aufträge
-führen beim Einzelaufruf zu Exitcode 1. Bei unklaren/fehlgeschlagenen Aufträgen
-weist `held` auf den manuellen Klärungsbedarf hin. Alte Testvorschauen der
-vier simulierten Warenkörbe bleiben unverändert und werden nie echt versendet.
-
-Vor einer späteren Inbetriebnahme müssen lokale Zugangsdaten und Zielchat
-bereitgestellt, eine einzelne echte Testmeldung bewusst geprüft und die
-Erstbestandsstrategie gewählt werden. Diese Entwicklung führt das nicht aus.
-Es gibt keinen Checkout, keine echten Warenkorbaktionen und kein Deployment.
+Die Produktmeldung lädt keine Kontositzung und löst keinerlei Warenkorbaktion aus.
+WOG, ChangeDetection und vorhandene VPS-Prozesse werden nicht angesprochen.

@@ -3,23 +3,25 @@ import assert from 'node:assert/strict';
 import { chmod, symlink, stat, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SessionVault } from '../src/brack/session-vault.js';
-import { AccountError, endpoint, hash, realAccounts, validateContract, validateGrant, validateRealAccounts } from '../src/brack/account-contract.js';
+import { AccountError, endpoint, hash, realAccounts, validateContract, validateRealAccounts } from '../src/brack/account-contract.js';
 import { accountOptions } from '../src/brack/account-options.js';
-import { enrolSession } from '../src/brack/real-account-adapter.js';
+import { enrolSession, RealAccountAdapter } from '../src/brack/real-account-adapter.js';
 import { accountSetup, contract, session } from './helpers/accounts.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-test('Genau vier echte Konten; sichere Optionen und 30-Sekunden-Grenze', () => {
+test('Genau vier echte Konten; CLI erlaubt ausschliesslich Anmeldung und Einzelprüfung', () => {
   validateRealAccounts(realAccounts());
   assert.throws(() => validateRealAccounts(realAccounts().slice(1)));
   assert.throws(() => validateRealAccounts([realAccounts()[0], ...realAccounts().slice(0, 3)]));
-  assert.equal(accountOptions(['--vault', '/private/brack']).write, false);
-  assert.equal(accountOptions(['--vault', '/private/brack', '--watch', '--interval-seconds', '30']).intervalMs, 30000);
+  assert.equal(accountOptions(['--vault', '/private/brack']).inspect, true);
+  assert.equal(accountOptions(['--vault', '/private/brack', '--login', 'brack-account-1']).inspect, false);
   for (const args of [['--vault', '/p', '--interval-seconds', '29.999'], ['--vault', '/p', '--password', 'x'],
     ['--vault', '/p', '--fixture', 'x'], ['--vault', '/p', '--login', 'brack-account-5'],
-    ['--vault', '/p', '--inspect', '--write-approved'], ['--vault', '/p', '--login', 'brack-account-1', '--watch'], []]) {
+    ['--vault', '/p', '--write-approved'], ['--vault', '/p', '--inspect', '--write-approved'],
+    ['--vault', '/p', '--watch'], ['--vault', '/p', '--telegram'], ['--vault', '/p', '--baseline'],
+    ['--vault', '/p', '--login', 'brack-account-1', '--watch'], []]) {
     assert.throws(() => accountOptions(args));
   }
 });
@@ -69,20 +71,20 @@ test('Read-only-Adapter hat getrennte Cookie-Jars und führt ausschliesslich erl
   await s.locked(async () => {
     for (const account of s.accounts) {
       assert.equal((await s.adapter.readCart(account)).cart, s.bindings[account.id].cart);
-      await assert.rejects(s.adapter.setTarget({ account }), /cart_writes_not_approved/);
+      assert.equal(s.adapter.setTarget, undefined);
+      await assert.rejects(s.adapter.request(account, 'write'), /cart_writes_not_supported/);
     }
   });
   assert.deepEqual([...new Set(s.requests.map(r => r.id))], s.accounts.map(a => a.id));
   assert.ok(s.requests.every(r => r.method === 'GET' && r.maxRedirects === 0 && r.maxRetries === 0));
 });
 
-test('Ungeprüfte Verträge, fremde Ziele, Checkout und unbekannte Limits sind gesperrt', async t => {
+test('Ungeprüfte Verträge, fremde Ziele, Checkout und Schreibverträge sind gesperrt', async t => {
   assert.throws(() => validateContract({ ...contract(), reviewed: false }), /contract_not_reviewed/);
   for (const path of ['https://evil.example/a', '//evil.example/a', '/checkout', '/api/orders',
     '/api/%63art', '/a/../cart', '/x?target=a', '/payment', '/cart/add']) assert.throws(() => endpoint(path));
-  const s = await accountSetup(t);
-  s.limits.accountLimit = null;
-  await s.locked(() => assert.rejects(s.adapter.readLimits(s.accounts[0], { id: '100001' }), /limits_unknown/));
+  assert.throws(() => validateContract({ ...contract(), write: { path: '/synthetic/cart' } }), /read_only_contract_required/);
+  assert.throws(() => validateContract({ ...contract(), product: { path: '/synthetic/product' } }), /read_only_contract_required/);
   assert.doesNotThrow(() => validateContract({ ...contract(), product: null, write: null, limitSemantics: null }));
 });
 
@@ -101,19 +103,15 @@ test('HTTP-429 pausiert, 403/503/CAPTCHA stoppen, 401 betrifft nur die Sitzung; 
   }
 });
 
-test('Schreiben benötigt gesonderte gültige Freigabe für exakt Vertrag und Kontobindungen', async t => {
-  const s = await accountSetup(t, { write: true });
-  validateGrant(s.grant, s.contract, s.bindings, s.time);
-  for (const change of [{ approved: false }, { expiresAt: s.time.toISOString() }, { bindings: {} },
-    { contractSha256: 'a'.repeat(64) }, { operation: 'checkout' }]) {
-    assert.throws(() => validateGrant({ ...s.grant, ...change }, s.contract, s.bindings, s.time));
-  }
+test('Schreibfähigkeit fehlt im Adapter auch bei vorhandener lokaler Freigabedatei', async t => {
+  const s = await accountSetup(t);
+  await s.vault.save('write-approval.json', { version: 1, approved: true });
+  assert.throws(() => new RealAccountAdapter({ vault: s.vault, contract: s.contract, requestFactory: s.requestFactory, write: true }), /cart_writes_not_supported/);
   await s.locked(async () => {
-    const a = s.accounts[0], cart = await s.adapter.readCart(a);
-    const limits = await s.adapter.readLimits(a, { id: '100001' });
-    await s.vault.save('write-approval.json', { ...s.grant, approved: false });
-    await assert.rejects(s.adapter.setTarget({ account: a, cart, limits, targetQuantity: 1,
-      product: { id: '100001', source: { observedAt: s.time.toISOString() } } }), /cart_writes_not_approved/);
+    await s.adapter.readCart(s.accounts[0]);
+    assert.equal(s.adapter.setTarget, undefined);
+    assert.equal(s.adapter.readLimits, undefined);
+    await assert.rejects(s.adapter.request(s.accounts[0], 'write'), /cart_writes_not_supported/);
   });
   assert.equal(s.requests.filter(r => r.method !== 'GET').length, 0);
 });
@@ -142,12 +140,12 @@ test('Interaktives Enrolment speichert Sitzung erst nach Identitätsprüfung und
 test('Beschädigter/öffentlich lesbarer Laufzustand wird nicht zurückgesetzt', async t => {
   const s = await accountSetup(t);
   await s.run();
-  await chmod(s.deps.store.path, 0o644);
+  await chmod(s.store.path, 0o644);
   await assert.rejects(s.run(), /account_state_permissions_invalid/);
-  await chmod(s.deps.store.path, 0o600);
-  await writeFile(s.deps.store.path, '{bad json');
+  await chmod(s.store.path, 0o600);
+  await writeFile(s.store.path, '{bad json');
   await assert.rejects(s.run());
-  assert.equal(await readFile(s.deps.store.path, 'utf8'), '{bad json');
+  assert.equal(await readFile(s.store.path, 'utf8'), '{bad json');
 });
 
 test('Unkonfigurierte echte CLI verweigert Start ohne Zustand oder Zugangsdaten im Log', async t => {
@@ -159,6 +157,19 @@ test('Unkonfigurierte echte CLI verweigert Start ohne Zustand oder Zugangsdaten 
     { cwd: fileURLToPath(new URL('../', import.meta.url)), env, timeout: 10000 }),
   e => e.code === 1 && !(e.stdout + e.stderr).includes(env.TELEGRAM_BOT_TOKEN));
   await assert.rejects(stat(join(s.directory, 'read-test-state')), { code: 'ENOENT' });
+});
+
+test('Echte CLI weist Schreibaktivierung auch mit lokaler Freigabedatei vor jedem Zugriff ab', async t => {
+  const s = await accountSetup(t);
+  await s.vault.save('write-approval.json', { version: 1, approved: true });
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  await assert.rejects(promisify(execFile)(process.execPath,
+    ['src/accounts-cli.js', '--vault', s.directory, '--write-approved'],
+    { cwd: fileURLToPath(new URL('../', import.meta.url)), env, timeout: 10000 }), e => e.code === 1);
+  await assert.rejects(stat(join(s.directory, 'write-state')), { code: 'ENOENT' });
+  await assert.rejects(stat(join(s.directory, 'read-test-state')), { code: 'ENOENT' });
+  await assert.rejects(stat(join(s.directory, 'accounts.lock')), { code: 'ENOENT' });
 });
 
 test('Installierte optionale Playwright-Laufzeit isoliert vier echte API-Cookie-Jars ohne Netzwerk', async t => {
