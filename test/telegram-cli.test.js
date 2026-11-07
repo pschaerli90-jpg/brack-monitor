@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('Neue CLI ist standardmässig simuliert und akzeptiert nur ausdrückliche echte Zustellung', () => {
   assert.equal(notificationOptions([]).mode, 'test');
-  assert.equal(notificationOptions([]).intervalMs, 60000);
+  assert.equal(notificationOptions([]).intervalMs, 30000);
   assert.equal(notificationOptions(['--telegram', '--watch', '--interval-seconds', '30']).intervalMs, 30000);
   for (const seconds of ['0', '-1', '29', '29.999', 'NaN']) {
     assert.throws(() => notificationOptions(['--interval-seconds', seconds]));

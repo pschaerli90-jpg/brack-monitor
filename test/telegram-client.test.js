@@ -21,12 +21,15 @@ test('Telegram-Text enthält Produkt, Artikel, Produktsprache, Bestand und direk
   const p = parseListing(listing()).products[0];
   const text = discoveryMessage(p, { discoveredAt: '2026-11-03T12:00:00.000Z' });
   for (const value of ['Pokémon English Booster', 'Artikelnummer: 100001', 'Sprache: Englisch',
-    'Lagerbestand (bei Erkennung): 12', 'https://www.brack.ch/pokemon-english-booster-100001', '2026-11-03T12:00:00.000Z']) assert.ok(text.includes(value));
+    'Lagerbestand (bei Erkennung): 12', 'https://www.brack.ch/pokemon-english-booster-100001']) assert.ok(text.includes(value));
+  assert.ok(!text.includes('2026-11-03'));
+  assert.ok(!text.includes('Erkannt am'));
   assert.match(discoveryMessage({ ...p, stock: null }), /unbekannt/);
   assert.match(discoveryMessage({ ...p, stock: 0 }), /Erkennung\): 0/);
   assert.match(discoveryMessage({ ...p, language: 'de', series: '30-jahre-jubilaeum' }), /Sprache: Deutsch/);
   assert.throws(() => discoveryMessage({ ...p, url: 'https://evil.example' }));
-  assert.throws(() => discoveryMessage({ ...p, name: 'x'.repeat(4096) }));
+  assert.equal(discoveryMessage({ ...p, name: 'x'.repeat(4096) }).length, 1024);
+  assert.ok(discoveryMessage({ ...p, name: 'x'.repeat(4096) }).includes('…'));
 });
 
 test('Lokale Konfiguration akzeptiert vollständige Umgebungswerte, niemals Teilkonfiguration', async () => {
@@ -131,4 +134,40 @@ test('Testzustellung ist ohne Token möglich; ungültige Nachrichten werden vor 
   const client = new TelegramClient(config, { fetchImpl: async () => { calls++; return success(); } });
   for (const text of ['', ' ', 'x'.repeat(4097), null]) await assert.rejects(client.send(text), err => err.disposition === 'permanent');
   assert.equal(calls, 0);
+});
+
+test('Bildmeldung verwendet echten BRACK-Link als sendPhoto und Bildtext ohne Zeitstempel', async () => {
+  const p = parseListing(listing()).products[0];
+  let calls = 0;
+  const client = new TelegramClient(config, { fetchImpl: async (url, options) => {
+    calls++;
+    assert.ok(url.endsWith('/sendPhoto'));
+    const body = JSON.parse(options.body);
+    assert.equal(body.photo, p.imageUrl);
+    assert.match(body.caption, /Artikelnummer: 100001/);
+    assert.ok(!body.caption.includes('Erkannt am'));
+    assert.equal(body.parse_mode, undefined);
+    assert.equal(body.text, undefined);
+    return success();
+  } });
+  await client.send(discoveryMessage(p), { imageUrl: p.imageUrl });
+  assert.equal(calls, 1);
+  await assert.rejects(client.send('x'.repeat(1025), { imageUrl: p.imageUrl }), e => e.code === 'invalid_message');
+  await assert.rejects(client.send('text', { imageUrl: 'https://evil.example/a.jpg' }), e => e.code === 'invalid_message');
+  assert.equal(calls, 1);
+});
+
+test('sendPhoto respektiert 429 und wiederholt einen unklaren Bildversand nie intern', async () => {
+  const imageUrl = parseListing(listing()).products[0].imageUrl;
+  for (const kind of ['rate', 'timeout']) {
+    let calls = 0;
+    const client = new TelegramClient(config, { fetchImpl: async () => {
+      calls++;
+      if (kind === 'timeout') throw new DOMException('synthetic', 'TimeoutError');
+      return response({ ok: false, error_code: 429, parameters: { retry_after: 90 } }, 429);
+    } });
+    await assert.rejects(client.send('caption', { imageUrl }), e => kind === 'rate' ?
+      e.disposition === 'retry' && e.retryAfterMs === 90000 : e.disposition === 'uncertain');
+    assert.equal(calls, 1);
+  }
 });

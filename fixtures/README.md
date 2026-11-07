@@ -10,3 +10,10 @@ wurden nicht übernommen. Namen und Bestände sind historische Testdaten.
 Dieser Snapshot enthält keine Zielprodukte: die englische Priorisierung und die
 deutsche Jubiläumsserie werden mit synthetischen Datensätzen im selben Schema
 unter `test/helpers/brack.js` getestet.
+
+brack-product-image.json ist ein auf öffentliche Produkt-/Bildfelder reduzierter
+Datensatz vom 7. November 2026: Pokémon FR, SKU 2054891. Er dokumentiert das
+beobachtete MAIN/sizes-Schema und assets.brack.ch/images2/-URLs. Keine Cookies,
+Zugangsdaten oder INITIAL_STATE-Inhalte sind enthalten. Das historische
+brack-listing.html enthält absichtlich keine Bildfelder; fehlende Bilder werden
+im neuen Benachrichtigungsmodus nicht durch erfundene URLs ersetzt.

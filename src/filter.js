@@ -5,6 +5,12 @@ export function priority(product) {
   return 0;
 }
 
+// Notification selection is independent of the legacy simulated cart policy.
+// Every supported Pokémon language has equal eligibility; callers keep source order.
+export function notificationSelected(product) {
+  return product?.brand === 'pokemon' && ['en', 'de', 'fr'].includes(product.language);
+}
+
 export function validateProduct(p) {
   if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id.trim() ||
       typeof p.name !== 'string' || !p.name.trim() ||

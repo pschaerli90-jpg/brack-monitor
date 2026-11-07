@@ -1,3 +1,4 @@
+import { productImageUrl } from '../brack/parser.js';
 import { validateTelegramConfig } from './config.js';
 
 const SAFE_CODES = new Set(['rate_limited', 'rejected', 'unauthorized', 'forbidden',
@@ -29,15 +30,18 @@ export class TelegramClient {
   }
 
   // Exactly one POST per call. Durable retry decisions belong to the outbox.
-  async send(text) {
-    if (typeof text !== 'string' || !text.trim() || text.length > 4096) throw new TelegramDeliveryError('invalid_message', 'permanent');
+  async send(text, { imageUrl } = {}) {
+    if (typeof text !== 'string' || !text.trim() || text.length > (imageUrl ? 1024 : 4096)) throw new TelegramDeliveryError('invalid_message', 'permanent');
+    let photo;
+    try { photo = productImageUrl(imageUrl); } catch { throw new TelegramDeliveryError('invalid_message', 'permanent'); }
     let response;
     try {
-      response = await this.#fetch('https://api.telegram.org/bot' + this.#token + '/sendMessage', {
+      response = await this.#fetch('https://api.telegram.org/bot' + this.#token + (photo ? '/sendPhoto' : '/sendMessage'), {
         method: 'POST', redirect: 'manual', credentials: 'omit', cache: 'no-store',
         signal: AbortSignal.timeout(this.timeoutMs),
         headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ chat_id: this.#chatId, text, link_preview_options: { is_disabled: true } })
+        body: JSON.stringify(photo ? { chat_id: this.#chatId, photo, caption: text } :
+          { chat_id: this.#chatId, text, link_preview_options: { is_disabled: true } })
       });
     } catch (err) {
       const beforeSend = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT'].includes(err?.cause?.code);

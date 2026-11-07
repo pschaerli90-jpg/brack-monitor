@@ -4,6 +4,7 @@ export const rawProduct = (id = 100001, changes = {}) => ({
   sku: id, language: 'de', url: '/pokemon-english-booster-' + id,
   breadcrumbs: [{ name: 'Sammelkarten' }], manufacturer: { name: 'The Pokémon Company' },
   description: { nameWithoutManufacturer: 'Pokémon English Booster', shortTextList: ['Sprache: Englisch', 'Themenwelt: Pokémon'] },
+  images: [{ type: 'MAIN', sizes: [{ variant: 'XL', src: '/images2/6/0/5/373526506/373526506_xl.jpg' }] }],
   inventory: { current: 12 }, states: { active: true }, ...changes
 });
 export function listing(products = [rawProduct()], { total = products.length, page = 1, sort = 'newdesc', next = null } = {}) {

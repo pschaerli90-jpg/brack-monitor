@@ -1,0 +1,69 @@
+{
+  "sku": 2054891,
+  "language": "de",
+  "url": "/the-pokemon-company-deck-championnats-du-monde-2025-fr-2054891",
+  "breadcrumbs": [
+    {
+      "name": "Sport & Freizeit",
+      "url": "/sport-freizeit"
+    },
+    {
+      "name": "Spielwaren",
+      "url": "/sport-freizeit/spielwaren"
+    },
+    {
+      "name": "Puzzles & Spiele",
+      "url": "/sport-freizeit/spielwaren/puzzles-spiele"
+    },
+    {
+      "name": "Spiele",
+      "url": "/sport-freizeit/spielwaren/puzzles-spiele/spiele"
+    },
+    {
+      "name": "Sammelkarten",
+      "url": "/sport-freizeit/spielwaren/puzzles-spiele/spiele/sammelkarten"
+    }
+  ],
+  "description": {
+    "nameWithoutManufacturer": "Deck Championnats du Monde 2025 -FR-",
+    "shortTextList": [
+      "Sprache: Französisch",
+      "Themenwelt: Pokémon",
+      "Altersempfehlung ab: 6 Jahren"
+    ],
+    "uniqueSellingPoints": [
+      "1 Deck der Weltmeisterschaften mit 60 Karten",
+      "1 Heft der Weltmeisterschaften 2025",
+      "1 Pin der Weltmeisterschaften 2025",
+      "1 Münze der Weltmeisterschaften 2025",
+      "1 Deckbox der Weltmeisterschaften 2025",
+      "1 Spielunterlage und 1 Poster\n1 Code-Karte für Pokémon-Sammelkartenspiel-Live"
+    ]
+  },
+  "manufacturer": {
+    "code": "103150",
+    "name": "The Pokémon Company",
+    "nameUrlEncoded": "The+Pok%C3%A9mon+Company"
+  },
+  "inventory": {
+    "current": 17
+  },
+  "states": {
+    "active": true
+  },
+  "images": [
+    {
+      "type": "MAIN",
+      "sizes": [
+        {
+          "src": "/images2/8/0/9/412765908/412765908_xxl.jpg",
+          "variant": "XXL"
+        },
+        {
+          "src": "/images2/8/0/9/412765908/412765908_xl.jpg",
+          "variant": "XL"
+        }
+      ]
+    }
+  ]
+}
